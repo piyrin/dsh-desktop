@@ -270,6 +270,37 @@ internal static class DesktopApplicationTests
             AssertEx.True(restart.Wait(1000));
         });
 
+        runner.Add("secondary activation suppresses a retry splash while restoring its final error", delegate {
+            DesktopHarness harness = new DesktopHarness();
+            harness.Backend.EnsureCompletion.SetResult(new ReadinessResult(
+                ReadinessState.NotReady, TimeSpan.FromSeconds(30), "timed out"));
+            AssertEx.True(harness.Application.RunColdStartAsync().Wait(1000));
+            AssertEx.Equal(1, harness.Window.ErrorCalls);
+
+            harness.Timer.ThresholdCompletion = new TaskCompletionSource<bool>();
+            harness.Timer.ElapsedObserved = new TaskCompletionSource<bool>();
+            harness.Timer.ElapsedValue = TimeSpan.FromMilliseconds(3001);
+            harness.Backend.EnsureCompletion = new TaskCompletionSource<ReadinessResult>();
+            harness.Window.RetryAction();
+            AssertEx.True(WaitUntil(delegate { return harness.Backend.EnsureCalls == 2; }));
+
+            harness.Application.Restore(OpenReason.SecondaryActivation);
+            harness.Timer.ThresholdCompletion.SetResult(true);
+            AssertEx.True(harness.Timer.ElapsedObserved.Task.Wait(1000));
+
+            AssertEx.Equal(1, harness.Window.RestoreCalls);
+            AssertEx.Equal(0, harness.Window.WaitingCalls);
+            AssertEx.Equal(0, harness.Window.SplashCalls);
+            AssertEx.Equal(0, harness.Window.WebCalls);
+            AssertEx.Equal(1, harness.Window.ErrorCalls);
+            AssertEx.True(harness.Window.IsVisible);
+            AssertEx.False(harness.Backend.EnsureCompletion.Task.IsCompleted);
+
+            harness.Window.InitializeCompletion.SetResult(true);
+            harness.Backend.EnsureCompletion.SetResult(Ready());
+            AssertEx.True(WaitUntil(delegate { return harness.Window.WebCalls == 1; }));
+        });
+
         runner.Add("ready completion after close never transiently shows the window", delegate {
             DesktopHarness harness = new DesktopHarness();
             harness.Timer.ElapsedValue = TimeSpan.FromMilliseconds(3001);

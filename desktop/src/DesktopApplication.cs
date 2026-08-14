@@ -217,7 +217,7 @@ internal sealed class DesktopApplication
         lock (presentationSync)
         {
             showFinalPresentation = hasFinalPresentation;
-            if (!showFinalPresentation && activePresentationOperation != null)
+            if (activePresentationOperation != null)
                 activePresentationOperation.SuppressAnimation();
         }
         if (showFinalPresentation)
