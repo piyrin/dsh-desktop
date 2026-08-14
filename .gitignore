@@ -1,0 +1,18 @@
+.superpowers/
+desktop/packages/
+desktop/publish/
+desktop/test-output/
+desktop/obj/
+
+# Local vision-test images are organized under samples but not published by default.
+/upload-*.png
+/upload-*.jpg
+/clip-test.png
+samples/vision/*
+!samples/vision/.gitkeep
+
+# Local runtime output.
+*.log
+*.tmp
+Thumbs.db
+Desktop.ini
