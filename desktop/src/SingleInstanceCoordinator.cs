@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 
 internal static class ActivationProtocol
 {
@@ -23,12 +25,14 @@ internal sealed class SingleInstanceCoordinator : IDisposable
     private const string MutexName = "Local\\DeepSeekHarness.Desktop.v1";
     private const string PipeName = "DeepSeekHarness.Desktop.Activation.v1";
     private const int MaximumSignalWaitMilliseconds = 1500;
+    private const int ClientReadTimeoutMilliseconds = 250;
 
     private readonly object sync = new object();
-    private Mutex mutex;
+    private readonly ManualResetEvent electionCompleted = new ManualResetEvent(false);
     private NamedPipeServerStream listeningPipe;
-    private Thread listenerThread;
-    private bool ownsMutex;
+    private Thread primaryThread;
+    private bool electionAttempted;
+    private bool primary;
     private bool disposed;
 
     internal event EventHandler ActivateRequested;
@@ -38,26 +42,15 @@ internal sealed class SingleInstanceCoordinator : IDisposable
         lock (sync)
         {
             ThrowIfDisposed();
-            if (mutex != null) return ownsMutex;
-
-            bool createdNew;
-            mutex = new Mutex(false, MutexName, out createdNew);
-            try
-            {
-                ownsMutex = mutex.WaitOne(0);
-            }
-            catch (AbandonedMutexException)
-            {
-                ownsMutex = true;
-            }
-
-            if (!ownsMutex) return false;
-
-            listenerThread = new Thread(ListenForActivation);
-            listenerThread.IsBackground = true;
-            listenerThread.Start();
-            return true;
+            if (electionAttempted) return primary;
+            electionAttempted = true;
+            primaryThread = new Thread(RunPrimary);
+            primaryThread.IsBackground = true;
+            primaryThread.Start();
         }
+
+        electionCompleted.WaitOne();
+        lock (sync) return primary;
     }
 
     internal bool SignalPrimary(TimeSpan timeout)
@@ -65,44 +58,21 @@ internal sealed class SingleInstanceCoordinator : IDisposable
         if (disposed) return false;
 
         int waitMilliseconds = ToBoundedMilliseconds(timeout);
-        DateTime deadline = DateTime.UtcNow.AddMilliseconds(waitMilliseconds);
-        while (true)
+        if (waitMilliseconds == 0) return false;
+
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        SignalAttempt attempt = new SignalAttempt();
+        using (Timer deadline = new Timer(delegate { attempt.Expire(); }, null, waitMilliseconds, Timeout.Infinite))
         {
-            try
+            Task<bool> operation = Task.Factory.StartNew(delegate {
+                return SendActivation(attempt, stopwatch, waitMilliseconds);
+            });
+            if (!operation.Wait(RemainingMilliseconds(stopwatch, waitMilliseconds)))
             {
-                using (NamedPipeClientStream client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out))
-                {
-                    int remainingMilliseconds = (int)Math.Max(0, (deadline - DateTime.UtcNow).TotalMilliseconds);
-                    try
-                    {
-                        client.Connect(remainingMilliseconds);
-                    }
-                    catch (IOException)
-                    {
-                        if (DateTime.UtcNow >= deadline) return false;
-                        Thread.Sleep(10);
-                        continue;
-                    }
-                    using (StreamWriter writer = new StreamWriter(client, new UTF8Encoding(false)))
-                    {
-                        writer.Write(ActivationProtocol.SerializeActivate());
-                        writer.Flush();
-                        return true;
-                    }
-                }
-            }
-            catch (IOException)
-            {
+                attempt.Expire();
                 return false;
             }
-            catch (TimeoutException)
-            {
-                return false;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return false;
-            }
+            return !attempt.IsExpired && stopwatch.ElapsedMilliseconds <= waitMilliseconds && operation.Result;
         }
     }
 
@@ -110,21 +80,14 @@ internal sealed class SingleInstanceCoordinator : IDisposable
     {
         NamedPipeServerStream pipeToClose;
         Thread threadToJoin;
-        Mutex mutexToDispose;
-        bool releaseMutex;
 
         lock (sync)
         {
             if (disposed) return;
             disposed = true;
             pipeToClose = listeningPipe;
-            threadToJoin = listenerThread;
-            mutexToDispose = mutex;
-            releaseMutex = ownsMutex;
-            ownsMutex = false;
+            threadToJoin = primaryThread;
             listeningPipe = null;
-            listenerThread = null;
-            mutex = null;
         }
 
         if (pipeToClose != null)
@@ -135,14 +98,38 @@ internal sealed class SingleInstanceCoordinator : IDisposable
         }
         if (threadToJoin != null && threadToJoin != Thread.CurrentThread)
             threadToJoin.Join(1000);
-        if (mutexToDispose != null)
+    }
+
+    private void RunPrimary()
+    {
+        Mutex primaryMutex = null;
+        bool ownsPrimaryMutex = false;
+        try
         {
-            if (releaseMutex)
+            primaryMutex = new Mutex(false, MutexName);
+            try { ownsPrimaryMutex = primaryMutex.WaitOne(0); }
+            catch (AbandonedMutexException) { ownsPrimaryMutex = true; }
+            lock (sync)
             {
-                try { mutexToDispose.ReleaseMutex(); }
-                catch (ApplicationException) { }
+                primary = ownsPrimaryMutex && !disposed;
+                electionCompleted.Set();
             }
-            mutexToDispose.Dispose();
+            if (!primary) return;
+            ListenForActivation();
+        }
+        finally
+        {
+            if (!electionCompleted.WaitOne(0))
+            {
+                lock (sync)
+                {
+                    primary = false;
+                    electionCompleted.Set();
+                }
+            }
+            if (ownsPrimaryMutex) primaryMutex.ReleaseMutex();
+            if (primaryMutex != null) primaryMutex.Dispose();
+            lock (sync) primary = false;
         }
     }
 
@@ -156,7 +143,7 @@ internal sealed class SingleInstanceCoordinator : IDisposable
                 lock (sync)
                 {
                     if (disposed) return;
-                    server = new NamedPipeServerStream(PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.None);
+                    server = new NamedPipeServerStream(PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
                     listeningPipe = server;
                 }
             }
@@ -196,13 +183,59 @@ internal sealed class SingleInstanceCoordinator : IDisposable
     private static string ReadUtf8Line(Stream stream)
     {
         List<byte> bytes = new List<byte>();
+        byte[] buffer = new byte[1];
+        Stopwatch stopwatch = Stopwatch.StartNew();
         while (true)
         {
-            int value = stream.ReadByte();
-            if (value < 0) return null;
-            bytes.Add((byte)value);
-            if (value == '\n') return Encoding.UTF8.GetString(bytes.ToArray());
+            int remainingMilliseconds = ClientReadTimeoutMilliseconds - (int)stopwatch.ElapsedMilliseconds;
+            if (remainingMilliseconds <= 0) return null;
+            IAsyncResult read = stream.BeginRead(buffer, 0, 1, null, null);
+            if (!read.AsyncWaitHandle.WaitOne(remainingMilliseconds)) return null;
+            if (stream.EndRead(read) == 0) return null;
+            bytes.Add(buffer[0]);
+            if (buffer[0] == '\n') return Encoding.UTF8.GetString(bytes.ToArray());
         }
+    }
+
+    private static bool SendActivation(SignalAttempt attempt, Stopwatch stopwatch, int budgetMilliseconds)
+    {
+        while (!attempt.IsExpired)
+        {
+            int remainingMilliseconds = RemainingMilliseconds(stopwatch, budgetMilliseconds);
+            if (remainingMilliseconds <= 0) return false;
+
+            NamedPipeClientStream client = null;
+            try
+            {
+                client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out);
+                if (!attempt.SetClient(client)) return false;
+                client.Connect(remainingMilliseconds);
+                if (attempt.IsExpired) return false;
+                using (StreamWriter writer = new StreamWriter(client, new UTF8Encoding(false), 1024, true))
+                {
+                    writer.Write(ActivationProtocol.SerializeActivate());
+                    if (attempt.IsExpired) return false;
+                    writer.Flush();
+                }
+                return !attempt.IsExpired && RemainingMilliseconds(stopwatch, budgetMilliseconds) >= 0;
+            }
+            catch (IOException)
+            {
+                if (attempt.IsExpired) return false;
+                int delayMilliseconds = Math.Min(10, RemainingMilliseconds(stopwatch, budgetMilliseconds));
+                if (delayMilliseconds <= 0) return false;
+                Thread.Sleep(delayMilliseconds);
+            }
+            catch (TimeoutException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
+            catch (ObjectDisposedException) { return false; }
+            finally
+            {
+                attempt.ClearClient(client);
+                if (client != null) client.Dispose();
+            }
+        }
+        return false;
     }
 
     private void OnActivateRequested()
@@ -216,6 +249,12 @@ internal sealed class SingleInstanceCoordinator : IDisposable
         if (timeout <= TimeSpan.Zero) return 0;
         if (timeout.TotalMilliseconds >= MaximumSignalWaitMilliseconds) return MaximumSignalWaitMilliseconds;
         return (int)timeout.TotalMilliseconds;
+    }
+
+    private static int RemainingMilliseconds(Stopwatch stopwatch, int budgetMilliseconds)
+    {
+        long remaining = budgetMilliseconds - stopwatch.ElapsedMilliseconds;
+        return remaining <= 0 ? 0 : (int)remaining;
     }
 
     private static void WakeListener()
@@ -234,5 +273,47 @@ internal sealed class SingleInstanceCoordinator : IDisposable
     private void ThrowIfDisposed()
     {
         if (disposed) throw new ObjectDisposedException("SingleInstanceCoordinator");
+    }
+
+    private sealed class SignalAttempt
+    {
+        private readonly object signalSync = new object();
+        private NamedPipeClientStream client;
+        private bool expired;
+
+        internal bool IsExpired
+        {
+            get { lock (signalSync) return expired; }
+        }
+
+        internal bool SetClient(NamedPipeClientStream candidate)
+        {
+            lock (signalSync)
+            {
+                if (expired) return false;
+                client = candidate;
+                return true;
+            }
+        }
+
+        internal void ClearClient(NamedPipeClientStream candidate)
+        {
+            lock (signalSync)
+            {
+                if (Object.ReferenceEquals(client, candidate)) client = null;
+            }
+        }
+
+        internal void Expire()
+        {
+            NamedPipeClientStream clientToClose;
+            lock (signalSync)
+            {
+                if (expired) return;
+                expired = true;
+                clientToClose = client;
+            }
+            if (clientToClose != null) clientToClose.Dispose();
+        }
     }
 }
