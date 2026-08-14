@@ -44,6 +44,7 @@ internal sealed class TestRunner
         TestRunner runner = new TestRunner();
         StartupPolicyTests.Register(runner);
         DshInstallationTests.Register(runner);
+        DshReadinessTests.Register(runner);
         return runner.Run(filter);
     }
 }
