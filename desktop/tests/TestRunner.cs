@@ -50,6 +50,9 @@ internal sealed class TestRunner
 
         TestRunner runner = new TestRunner();
         StartupPolicyTests.Register(runner);
+        DesktopUiPolicyTests.Register(runner);
+        AppAssetsTests.Register(runner);
+        SplashOverlayTests.Register(runner);
         DshInstallationTests.Register(runner);
         DshReadinessTests.Register(runner);
         BackendOwnershipTests.Register(runner);
