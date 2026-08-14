@@ -120,14 +120,17 @@ internal sealed class BackendSupervisor
         if (probe.State == ReadinessState.PortConflict)
             return probe;
 
+        if (Ownership == BackendOwnership.External)
+        {
+            Ownership = BackendOwnership.None;
+            AppLogger.WriteDesktop(paths, "Previously attached external DSH backend is no longer ready; starting an owned backend.");
+        }
+
         if (Ownership == BackendOwnership.Owned && ownedProcess != null && !ownedProcess.HasExited)
             return await WaitForOwnedReadinessAsync(token).ConfigureAwait(false);
 
         if (Ownership == BackendOwnership.Owned)
             CleanupExitedOwned();
-
-        if (Ownership == BackendOwnership.External)
-            return new ReadinessResult(ReadinessState.NotReady, TimeSpan.Zero, "External DSH backend is no longer ready; it will not be stopped or restarted.");
 
         try
         {

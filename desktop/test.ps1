@@ -5,12 +5,15 @@ $testOutput = Join-Path $root 'test-output'
 $output = Join-Path $testOutput 'DesktopTests.exe'
 $helperOutput = Join-Path $testOutput 'NoWindowHelper.exe'
 $earlyExitHelperOutput = Join-Path $testOutput 'EarlyExitHelper.exe'
+$backendServerHelperOutput = Join-Path $testOutput 'BackendServerHelper.exe'
 $compiler = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $frameworkRoot = 'C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8'
 $null = New-Item -ItemType Directory -Force -Path $testOutput
 & $compiler /nologo /target:exe /out:$helperOutput (Join-Path $root 'tests\NoWindowHelper.cs')
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $compiler /nologo /target:exe /out:$earlyExitHelperOutput (Join-Path $root 'tests\EarlyExitHelper.cs')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& $compiler /nologo /target:exe /out:$backendServerHelperOutput (Join-Path $root 'tests\BackendServerHelper.cs')
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $sources = @(
   (Join-Path $root 'tests\TestRunner.cs'),

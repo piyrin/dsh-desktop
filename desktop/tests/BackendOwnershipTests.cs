@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Runtime.Serialization;
+using System.Diagnostics;
 
 internal static class BackendOwnershipTests
 {
@@ -13,6 +14,47 @@ internal static class BackendOwnershipTests
         });
         runner.Add("external backend cannot be restarted", delegate {
             AssertEx.False(BackendOwnershipPolicy.MayRestart(BackendOwnership.External));
+        });
+        runner.Add("retry starts an owned backend after an attached external endpoint disappears", delegate {
+            string helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "test-output", "BackendServerHelper.exe");
+            string testDirectory = Path.Combine(Path.GetTempPath(), "dsh-stale-external-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(testDirectory);
+            string stopExternal = Path.Combine(testDirectory, "stop-external");
+            string exitExternal = Path.Combine(testDirectory, "exit-external");
+            AppPaths paths = AppPaths.Create(testDirectory, Path.GetDirectoryName(helper));
+            BackendLaunchSpec spec = CreateLaunchSpec(helper);
+            Set(spec, "<Arguments>k__BackingField", "8080");
+            BackendSupervisor supervisor = new BackendSupervisor(spec, paths);
+            Process external = StartBackendServer(helper, "8080 \"" + stopExternal + "\" \"" + exitExternal + "\"");
+
+            try
+            {
+                AssertEx.Equal("backend-helper-ready", ReadLine(external));
+                ReadinessResult attached = supervisor.EnsureReadyAsync(System.Threading.CancellationToken.None).GetAwaiter().GetResult();
+                AssertEx.Equal(ReadinessState.Ready, attached.State);
+                AssertEx.Equal(BackendOwnership.External, supervisor.Ownership);
+
+                File.WriteAllText(stopExternal, "stop");
+                AssertEx.Equal("backend-helper-stopped", ReadLine(external));
+                AssertEx.False(external.HasExited);
+
+                ReadinessResult retried = supervisor.EnsureReadyAsync(System.Threading.CancellationToken.None).GetAwaiter().GetResult();
+                AssertEx.Equal(ReadinessState.Ready, retried.State);
+                AssertEx.Equal(BackendOwnership.Owned, supervisor.Ownership);
+                AssertEx.False(external.HasExited);
+
+                supervisor.StopOwnedAsync().GetAwaiter().GetResult();
+                AssertEx.Equal(BackendOwnership.None, supervisor.Ownership);
+                AssertEx.False(external.HasExited);
+            }
+            finally
+            {
+                try { supervisor.StopOwnedAsync().GetAwaiter().GetResult(); }
+                catch (Exception) { }
+                File.WriteAllText(exitExternal, "exit");
+                if (!external.WaitForExit(5000)) external.Kill();
+                external.Dispose();
+            }
         });
         runner.Add("owned backend can be stopped and restarted", delegate {
             AssertEx.True(BackendOwnershipPolicy.MayStop(BackendOwnership.Owned));
@@ -171,6 +213,29 @@ internal static class BackendOwnershipTests
         Set(spec, "<WorkingDirectory>k__BackingField", Path.GetDirectoryName(helper));
         Set(spec, "<Environment>k__BackingField", new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
         return spec;
+    }
+
+    private static Process StartBackendServer(string helper, string arguments)
+    {
+        Process process = new Process();
+        process.StartInfo.FileName = helper;
+        process.StartInfo.Arguments = arguments;
+        process.StartInfo.WorkingDirectory = Path.GetDirectoryName(helper);
+        process.StartInfo.UseShellExecute = false;
+        process.StartInfo.CreateNoWindow = true;
+        process.StartInfo.RedirectStandardOutput = true;
+        process.StartInfo.RedirectStandardError = true;
+        process.Start();
+        return process;
+    }
+
+    private static string ReadLine(Process process)
+    {
+        System.Threading.Tasks.Task<string> read = process.StandardOutput.ReadLineAsync();
+        if (!read.Wait(5000)) throw new Exception("Timed out waiting for backend helper output.");
+        if (read.Result == null)
+            throw new Exception("Backend helper exited before signaling readiness: " + process.StandardError.ReadToEnd());
+        return read.Result;
     }
 
     private static void Set(BackendLaunchSpec spec, string name, object value)
