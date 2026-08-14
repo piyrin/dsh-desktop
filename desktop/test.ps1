@@ -17,6 +17,7 @@ $sources = @(
   (Join-Path $root 'tests\DshInstallationTests.cs'),
   (Join-Path $root 'tests\DshReadinessTests.cs'),
   (Join-Path $root 'tests\BackendOwnershipTests.cs'),
+  (Join-Path $root 'tests\ActivationProtocolTests.cs'),
   (Join-Path $root 'src\AppLogger.cs'),
   (Join-Path $root 'src\JobObject.cs'),
   (Join-Path $root 'src\AppPaths.cs'),
@@ -26,6 +27,7 @@ $sources = @(
   (Join-Path $root 'src\BackendLaunchSpec.cs')
   ,(Join-Path $root 'src\DshReadiness.cs')
   ,(Join-Path $root 'src\BackendSupervisor.cs')
+  ,(Join-Path $root 'src\SingleInstanceCoordinator.cs')
 )
 & $compiler /nologo /target:exe /reference:System.Net.Http.dll /out:$output $sources
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

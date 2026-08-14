@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Threading;
 
 internal sealed class TestRunner
 {
@@ -34,6 +36,11 @@ internal sealed class TestRunner
 
     internal static int Main(string[] args)
     {
+        if (args.Length == 2 && String.Equals(args[0], "--activation-primary", StringComparison.OrdinalIgnoreCase))
+            return RunActivationPrimary(args[1]);
+        if (args.Length == 1 && String.Equals(args[0], "--activation-secondary", StringComparison.OrdinalIgnoreCase))
+            return RunActivationSecondary();
+
         string filter = null;
         for (int index = 0; index < args.Length; index++)
         {
@@ -46,7 +53,32 @@ internal sealed class TestRunner
         DshInstallationTests.Register(runner);
         DshReadinessTests.Register(runner);
         BackendOwnershipTests.Register(runner);
+        ActivationProtocolTests.Register(runner);
         return runner.Run(filter);
+    }
+
+    private static int RunActivationPrimary(string activationPath)
+    {
+        using (SingleInstanceCoordinator coordinator = new SingleInstanceCoordinator())
+        using (ManualResetEvent activated = new ManualResetEvent(false))
+        {
+            coordinator.ActivateRequested += delegate {
+                File.WriteAllText(activationPath, "activated");
+                activated.Set();
+            };
+            if (!coordinator.TryBecomePrimary()) return 2;
+            Console.WriteLine("READY");
+            return activated.WaitOne(5000) ? 0 : 3;
+        }
+    }
+
+    private static int RunActivationSecondary()
+    {
+        using (SingleInstanceCoordinator coordinator = new SingleInstanceCoordinator())
+        {
+            if (coordinator.TryBecomePrimary()) return 2;
+            return coordinator.SignalPrimary(TimeSpan.FromMilliseconds(1500)) ? 0 : 3;
+        }
     }
 }
 
