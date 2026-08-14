@@ -83,6 +83,84 @@ internal static class BackendOwnershipTests
             string helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "test-output", "NoWindowHelper.exe");
             AssertEx.True(BackendSupervisor.JobSetupFailureCleansUpForTestingAsync(CreateLaunchSpec(helper)).GetAwaiter().GetResult());
         });
+        runner.Add("start failure preserves cancellation and releases exact child resources", delegate {
+            string helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "test-output", "NoWindowHelper.exe");
+            AppPaths paths = AppPaths.Create(Path.Combine(Path.GetTempPath(), "dsh-task4-start-cleanup"), Path.GetDirectoryName(helper));
+            BackendSupervisor supervisor = new BackendSupervisor(CreateLaunchSpec(helper), paths);
+            System.Threading.CancellationTokenSource cancellation = new System.Threading.CancellationTokenSource();
+            SuspendedBackendProcess native = null;
+            StreamReader output = null;
+            StreamReader error = null;
+            int processId = 0;
+            OperationCanceledException observed = null;
+
+            try
+            {
+                supervisor.StartOwnedProcessForTesting(cancellation.Token, delegate(SuspendedBackendProcess created) {
+                    native = created;
+                    output = created.StandardOutput;
+                    error = created.StandardError;
+                    processId = created.ProcessId;
+                    MethodInfo closeHandle = typeof(SuspendedBackendProcess).GetMethod("CloseHandle", BindingFlags.Static | BindingFlags.NonPublic);
+                    AssertEx.True((bool)closeHandle.Invoke(null, new object[] { created.ProcessHandle }));
+                    cancellation.Cancel();
+                });
+            }
+            catch (OperationCanceledException exception) { observed = exception; }
+
+            AssertEx.True(observed != null);
+            AssertEx.Equal(cancellation.Token, observed.CancellationToken);
+            AssertEx.True(WaitForProcessExit(processId));
+            AssertEx.Equal(IntPtr.Zero, (IntPtr)Get(native, "processHandle"));
+            AssertEx.Equal(IntPtr.Zero, (IntPtr)Get(native, "threadHandle"));
+            AssertEx.Equal<StreamReader>(null, native.StandardOutput);
+            AssertEx.Equal<StreamReader>(null, native.StandardError);
+            AssertEx.True(IsDisposed(output));
+            AssertEx.True(IsDisposed(error));
+            AssertEx.Equal(BackendOwnership.None, supervisor.Ownership);
+        });
+        runner.Add("late stderr from prior generation stays out of current detail", delegate {
+            string helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "test-output", "EarlyExitHelper.exe");
+            string testDirectory = Path.Combine(Path.GetTempPath(), "dsh-task4-late-tail-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(testDirectory);
+            string secondReady = Path.Combine(testDirectory, "second-ready");
+            string secondRelease = Path.Combine(testDirectory, "second-release");
+            AppPaths paths = AppPaths.Create(testDirectory, Path.GetDirectoryName(helper));
+            BackendLaunchSpec spec = CreateLaunchSpec(helper);
+            Set(spec, "<Arguments>k__BackingField", "stderr");
+            System.Threading.Tasks.TaskCompletionSource<bool> firstAppendReached = new System.Threading.Tasks.TaskCompletionSource<bool>();
+            System.Threading.Tasks.TaskCompletionSource<bool> releaseFirstAppend = new System.Threading.Tasks.TaskCompletionSource<bool>();
+            BackendSupervisor supervisor = new BackendSupervisor(spec, paths, delegate(string line) {
+                if (line.IndexOf("first-generation-error", StringComparison.Ordinal) >= 0)
+                {
+                    firstAppendReached.TrySetResult(true);
+                    return releaseFirstAppend.Task;
+                }
+                return System.Threading.Tasks.Task.FromResult(true);
+            });
+
+            try
+            {
+                System.Threading.Tasks.Task<ReadinessResult> firstTask = supervisor.EnsureReadyAsync(System.Threading.CancellationToken.None);
+                AssertEx.True(firstAppendReached.Task.Wait(5000));
+                firstTask.GetAwaiter().GetResult();
+
+                Set(spec, "<Arguments>k__BackingField", "wait \"" + secondReady + "\" \"" + secondRelease + "\"");
+                System.Threading.Tasks.Task<ReadinessResult> secondTask = supervisor.EnsureReadyAsync(System.Threading.CancellationToken.None);
+                AssertEx.True(WaitForFile(secondReady));
+                releaseFirstAppend.TrySetResult(true);
+                File.WriteAllText(secondRelease, "release");
+                ReadinessResult second = secondTask.GetAwaiter().GetResult();
+                AssertEx.True(second.Detail.IndexOf("first-generation-error", StringComparison.Ordinal) < 0);
+            }
+            finally
+            {
+                releaseFirstAppend.TrySetResult(true);
+                File.WriteAllText(secondRelease, "release");
+                try { supervisor.StopOwnedAsync().GetAwaiter().GetResult(); }
+                catch (Exception) { }
+            }
+        });
     }
 
     private static BackendLaunchSpec CreateLaunchSpec(string helper)
@@ -99,5 +177,46 @@ internal static class BackendOwnershipTests
     {
         FieldInfo field = typeof(BackendLaunchSpec).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
         field.SetValue(spec, value);
+    }
+
+    private static object Get(object instance, string name)
+    {
+        FieldInfo field = instance.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+        return field.GetValue(instance);
+    }
+
+    private static bool IsDisposed(StreamReader reader)
+    {
+        try { reader.Peek(); return false; }
+        catch (ObjectDisposedException) { return true; }
+    }
+
+    private static bool WaitForProcessExit(int processId)
+    {
+        DateTime deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                using (System.Diagnostics.Process process = System.Diagnostics.Process.GetProcessById(processId))
+                {
+                    if (process.HasExited) return true;
+                }
+            }
+            catch (ArgumentException) { return true; }
+            System.Threading.Thread.Sleep(20);
+        }
+        return false;
+    }
+
+    private static bool WaitForFile(string path)
+    {
+        DateTime deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (File.Exists(path)) return true;
+            System.Threading.Thread.Sleep(20);
+        }
+        return false;
     }
 }

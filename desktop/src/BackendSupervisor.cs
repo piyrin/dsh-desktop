@@ -69,6 +69,7 @@ internal sealed class BackendSupervisor
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
     private readonly BackendLaunchSpec launchSpec;
     private readonly AppPaths paths;
+    private readonly Func<string, Task> beforeStderrTailAppend;
     private readonly SemaphoreSlim stateGate = new SemaphoreSlim(1, 1);
     private Process ownedProcess;
     private JobObject ownedJob;
@@ -78,11 +79,17 @@ internal sealed class BackendSupervisor
     private RollingTextTail standardErrorTail = new RollingTextTail(2048);
 
     internal BackendSupervisor(BackendLaunchSpec launchSpec, AppPaths paths)
+        : this(launchSpec, paths, null)
+    {
+    }
+
+    internal BackendSupervisor(BackendLaunchSpec launchSpec, AppPaths paths, Func<string, Task> beforeStderrTailAppend)
     {
         if (launchSpec == null) throw new ArgumentNullException("launchSpec");
         if (paths == null) throw new ArgumentNullException("paths");
         this.launchSpec = launchSpec;
         this.paths = paths;
+        this.beforeStderrTailAppend = beforeStderrTailAppend;
         Ownership = BackendOwnership.None;
     }
 
@@ -272,18 +279,27 @@ internal sealed class BackendSupervisor
 
     private void StartOwnedProcess(CancellationToken token)
     {
+        StartOwnedProcess(token, null);
+    }
+
+    internal void StartOwnedProcessForTesting(CancellationToken token, Action<SuspendedBackendProcess> afterJobAssignment)
+    {
+        StartOwnedProcess(token, afterJobAssignment);
+    }
+
+    private void StartOwnedProcess(CancellationToken token, Action<SuspendedBackendProcess> afterJobAssignment)
+    {
         Process process = new Process();
         JobObject job = null;
         SuspendedBackendProcess native = null;
-        bool started = false;
         try
         {
             standardErrorTail = new RollingTextTail(2048);
             native = SuspendedBackendProcess.Start(launchSpec);
-            started = true;
             token.ThrowIfCancellationRequested();
             job = new JobObject();
             job.AssignHandle(native.ProcessHandle);
+            if (afterJobAssignment != null) afterJobAssignment(native);
             process = Process.GetProcessById(native.ProcessId);
             token.ThrowIfCancellationRequested();
             native.Resume();
@@ -295,25 +311,48 @@ internal sealed class BackendSupervisor
             standardError = CaptureOutputAsync(native.StandardError, true, standardErrorTail);
             AppLogger.WriteDesktop(paths, "Started owned DSH backend process " + process.Id + ".");
         }
-        catch
+        catch (Exception original)
         {
-            if (job != null)
-                job.Dispose();
-            else if (native == null && started && !process.HasExited)
-                process.Kill();
-            if (native != null) native.Dispose();
-            if (ownedProcess == process)
+            Exception cleanupFailure = null;
+            try
             {
-                ownedProcess = null;
-                ownedJob = null;
-                ownedNativeProcess = null;
-                standardOutput = null;
-                standardError = null;
-                Ownership = BackendOwnership.None;
+                if (job != null) job.Dispose();
             }
-            process.Dispose();
+            catch (Exception exception) { cleanupFailure = exception; }
+            finally
+            {
+                try
+                {
+                    if (native != null) native.Dispose();
+                }
+                catch (Exception exception) { cleanupFailure = CombineCleanupFailures(cleanupFailure, exception); }
+                finally
+                {
+                    ownedProcess = null;
+                    ownedJob = null;
+                    ownedNativeProcess = null;
+                    standardOutput = null;
+                    standardError = null;
+                    Ownership = BackendOwnership.None;
+                    try { process.Dispose(); }
+                    catch (Exception exception) { cleanupFailure = CombineCleanupFailures(cleanupFailure, exception); }
+                }
+            }
+            if (cleanupFailure != null)
+            {
+                try { original.Data["BackendCleanupFailure"] = cleanupFailure; }
+                catch (Exception) { }
+                try { AppLogger.WriteDesktop(paths, "Backend launch cleanup failed: " + cleanupFailure.Message); }
+                catch (Exception) { }
+            }
             throw;
         }
+    }
+
+    private static Exception CombineCleanupFailures(Exception first, Exception next)
+    {
+        if (first == null) return next;
+        return new AggregateException(first, next);
     }
 
     private async Task<ReadinessResult> WaitForOwnedReadinessAsync(CancellationToken token)
@@ -346,6 +385,8 @@ internal sealed class BackendSupervisor
         {
             if (isError)
             {
+                if (beforeStderrTailAppend != null)
+                    await beforeStderrTailAppend(line).ConfigureAwait(false);
                 tail.Append(line + Environment.NewLine);
                 AppLogger.WriteBackendStderr(paths, line + Environment.NewLine);
             }
@@ -395,6 +436,9 @@ internal sealed class SuspendedBackendProcess : IDisposable
     private const uint CreateUnicodeEnvironment = 0x00000400;
     private const uint StartfUseStdHandles = 0x00000100;
     private const uint HandleFlagInherit = 1;
+    private const uint StillActive = 259;
+    private const uint WaitObject0 = 0;
+    private const uint WaitTimeout = 258;
     private IntPtr processHandle;
     private IntPtr threadHandle;
     internal StreamReader StandardOutput { get; private set; }
@@ -479,22 +523,81 @@ internal sealed class SuspendedBackendProcess : IDisposable
 
     public void Dispose()
     {
-        if (threadHandle != IntPtr.Zero) CloseHandle(threadHandle);
-        if (processHandle != IntPtr.Zero)
+        IntPtr currentThread = threadHandle;
+        IntPtr currentProcess = processHandle;
+        StreamReader output = StandardOutput;
+        StreamReader error = StandardError;
+        threadHandle = IntPtr.Zero;
+        processHandle = IntPtr.Zero;
+        StandardOutput = null;
+        StandardError = null;
+        Exception cleanupFailure = null;
+
+        try
+        {
+            if (currentThread != IntPtr.Zero && !CloseHandle(currentThread))
+                cleanupFailure = new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Unable to close suspended DSH backend thread handle.");
+        }
+        finally
         {
             try
             {
-                uint exitCode;
-                if (!TerminateProcess(processHandle, 1) && GetExitCodeProcess(processHandle, out exitCode) && exitCode == 259)
-                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Unable to terminate suspended DSH backend.");
-                if (WaitForSingleObject(processHandle, 5000) != 0)
-                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Suspended DSH backend did not exit during cleanup.");
+                if (currentProcess != IntPtr.Zero)
+                {
+                    uint exitCode;
+                    bool active = true;
+                    if (GetExitCodeProcess(currentProcess, out exitCode))
+                        active = exitCode == StillActive;
+                    else
+                        cleanupFailure = CombineCleanupFailures(cleanupFailure, new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Unable to inspect suspended DSH backend during cleanup."));
+
+                    if (active && !TerminateProcess(currentProcess, 1))
+                    {
+                        int terminateError = Marshal.GetLastWin32Error();
+                        if (!GetExitCodeProcess(currentProcess, out exitCode) || exitCode == StillActive)
+                            cleanupFailure = CombineCleanupFailures(cleanupFailure, new System.ComponentModel.Win32Exception(terminateError, "Unable to terminate suspended DSH backend."));
+                    }
+
+                    uint waitResult = WaitForSingleObject(currentProcess, 5000);
+                    if (waitResult == WaitTimeout)
+                        cleanupFailure = CombineCleanupFailures(cleanupFailure, new TimeoutException("Suspended DSH backend did not exit during cleanup."));
+                    else if (waitResult != WaitObject0)
+                        cleanupFailure = CombineCleanupFailures(cleanupFailure, new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Unable to verify suspended DSH backend exit during cleanup."));
+                }
             }
-            finally { CloseHandle(processHandle); }
+            finally
+            {
+                try
+                {
+                    if (currentProcess != IntPtr.Zero && !CloseHandle(currentProcess))
+                        cleanupFailure = CombineCleanupFailures(cleanupFailure, new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Unable to close suspended DSH backend process handle."));
+                }
+                finally
+                {
+                    try
+                    {
+                        if (output != null) output.Dispose();
+                    }
+                    catch (Exception exception) { cleanupFailure = CombineCleanupFailures(cleanupFailure, exception); }
+                    finally
+                    {
+                        try
+                        {
+                            if (error != null) error.Dispose();
+                        }
+                        catch (Exception exception) { cleanupFailure = CombineCleanupFailures(cleanupFailure, exception); }
+                    }
+                }
+            }
         }
-        threadHandle = IntPtr.Zero; processHandle = IntPtr.Zero;
-        if (StandardOutput != null) StandardOutput.Dispose();
-        if (StandardError != null) StandardError.Dispose();
+
+        if (cleanupFailure != null) throw cleanupFailure;
+    }
+
+    private static Exception CombineCleanupFailures(Exception first, Exception next)
+    {
+        if (first == null) return next;
+        return new AggregateException(first, next);
     }
 
     private static IntPtr BuildEnvironment(IDictionary<string, string> additions)
