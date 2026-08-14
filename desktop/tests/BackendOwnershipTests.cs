@@ -75,6 +75,14 @@ internal static class BackendOwnershipTests
             ReadinessResult second = supervisor.EnsureReadyAsync(System.Threading.CancellationToken.None).GetAwaiter().GetResult();
             AssertEx.True(second.Detail.IndexOf("first-generation-error", StringComparison.Ordinal) < 0);
         });
+        runner.Add("post-create cancellation terminates suspended child", delegate {
+            string helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "test-output", "NoWindowHelper.exe");
+            AssertEx.True(BackendSupervisor.PostCreateCancellationCleansUpForTestingAsync(CreateLaunchSpec(helper)).GetAwaiter().GetResult());
+        });
+        runner.Add("job setup failure terminates suspended child", delegate {
+            string helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "test-output", "NoWindowHelper.exe");
+            AssertEx.True(BackendSupervisor.JobSetupFailureCleansUpForTestingAsync(CreateLaunchSpec(helper)).GetAwaiter().GetResult());
+        });
     }
 
     private static BackendLaunchSpec CreateLaunchSpec(string helper)

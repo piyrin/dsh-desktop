@@ -75,7 +75,7 @@ internal sealed class BackendSupervisor
     private SuspendedBackendProcess ownedNativeProcess;
     private Task standardOutput;
     private Task standardError;
-    private readonly RollingTextTail standardErrorTail = new RollingTextTail(2048);
+    private RollingTextTail standardErrorTail = new RollingTextTail(2048);
 
     internal BackendSupervisor(BackendLaunchSpec launchSpec, AppPaths paths)
     {
@@ -125,8 +125,9 @@ internal sealed class BackendSupervisor
         try
         {
             token.ThrowIfCancellationRequested();
-            StartOwnedProcess();
+            StartOwnedProcess(token);
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception exception)
         {
             return new ReadinessResult(ReadinessState.NotReady, TimeSpan.Zero, "Unable to start the DSH backend: " + exception.Message);
@@ -222,7 +223,7 @@ internal sealed class BackendSupervisor
 
     internal static async Task<bool> FailedSetupCleansUpForTestingAsync(BackendLaunchSpec spec)
     {
-        int processId;
+        int processId = 0;
         using (SuspendedBackendProcess process = SuspendedBackendProcess.Start(spec))
         {
             processId = process.ProcessId;
@@ -236,7 +237,40 @@ internal sealed class BackendSupervisor
         catch (ArgumentException) { return true; }
     }
 
-    private void StartOwnedProcess()
+    internal static async Task<bool> PostCreateCancellationCleansUpForTestingAsync(BackendLaunchSpec spec)
+    {
+        return await CleanupSuspendedForTestingAsync(spec, false).ConfigureAwait(false);
+    }
+
+    internal static async Task<bool> JobSetupFailureCleansUpForTestingAsync(BackendLaunchSpec spec)
+    {
+        return await CleanupSuspendedForTestingAsync(spec, true).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> CleanupSuspendedForTestingAsync(BackendLaunchSpec spec, bool createJob)
+    {
+        int processId = 0;
+        try
+        {
+            using (SuspendedBackendProcess process = SuspendedBackendProcess.Start(spec))
+            {
+                processId = process.ProcessId;
+                if (createJob)
+                {
+                    using (JobObject job = new JobObject())
+                        job.AssignHandle(IntPtr.Zero);
+                }
+                throw new OperationCanceledException();
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception) { }
+        await Task.Delay(30).ConfigureAwait(false);
+        try { using (Process process = Process.GetProcessById(processId)) return process.HasExited; }
+        catch (ArgumentException) { return true; }
+    }
+
+    private void StartOwnedProcess(CancellationToken token)
     {
         Process process = new Process();
         JobObject job = null;
@@ -244,19 +278,21 @@ internal sealed class BackendSupervisor
         bool started = false;
         try
         {
-            standardErrorTail.Clear();
+            standardErrorTail = new RollingTextTail(2048);
             native = SuspendedBackendProcess.Start(launchSpec);
             started = true;
+            token.ThrowIfCancellationRequested();
             job = new JobObject();
             job.AssignHandle(native.ProcessHandle);
             process = Process.GetProcessById(native.ProcessId);
+            token.ThrowIfCancellationRequested();
             native.Resume();
             ownedProcess = process;
             ownedJob = job;
             ownedNativeProcess = native;
             Ownership = BackendOwnership.Owned;
-            standardOutput = CaptureOutputAsync(native.StandardOutput, false);
-            standardError = CaptureOutputAsync(native.StandardError, true);
+            standardOutput = CaptureOutputAsync(native.StandardOutput, false, null);
+            standardError = CaptureOutputAsync(native.StandardError, true, standardErrorTail);
             AppLogger.WriteDesktop(paths, "Started owned DSH backend process " + process.Id + ".");
         }
         catch
@@ -303,14 +339,14 @@ internal sealed class BackendSupervisor
         return new ReadinessResult(ReadinessState.NotReady, elapsed, "DSH exited with code " + exitCode + ". stderr: " + standardErrorTail.Snapshot());
     }
 
-    private async Task CaptureOutputAsync(StreamReader reader, bool isError)
+    private async Task CaptureOutputAsync(StreamReader reader, bool isError, RollingTextTail tail)
     {
         string line;
         while ((line = await reader.ReadLineAsync().ConfigureAwait(false)) != null)
         {
             if (isError)
             {
-                standardErrorTail.Append(line + Environment.NewLine);
+                tail.Append(line + Environment.NewLine);
                 AppLogger.WriteBackendStderr(paths, line + Environment.NewLine);
             }
             else
@@ -446,9 +482,15 @@ internal sealed class SuspendedBackendProcess : IDisposable
         if (threadHandle != IntPtr.Zero) CloseHandle(threadHandle);
         if (processHandle != IntPtr.Zero)
         {
-            TerminateProcess(processHandle, 1);
-            WaitForSingleObject(processHandle, 5000);
-            CloseHandle(processHandle);
+            try
+            {
+                uint exitCode;
+                if (!TerminateProcess(processHandle, 1) && GetExitCodeProcess(processHandle, out exitCode) && exitCode == 259)
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Unable to terminate suspended DSH backend.");
+                if (WaitForSingleObject(processHandle, 5000) != 0)
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Suspended DSH backend did not exit during cleanup.");
+            }
+            finally { CloseHandle(processHandle); }
         }
         threadHandle = IntPtr.Zero; processHandle = IntPtr.Zero;
         if (StandardOutput != null) StandardOutput.Dispose();

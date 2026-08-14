@@ -25,6 +25,13 @@ internal sealed class JobObject : IDisposable
             if (!SetInformationJobObject(handle, JobObjectExtendedLimitInformationClass, buffer, (uint)length))
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to configure backend job object.");
         }
+        catch
+        {
+            IntPtr current = handle;
+            handle = IntPtr.Zero;
+            if (current != IntPtr.Zero) CloseHandle(current);
+            throw;
+        }
         finally
         {
             Marshal.FreeHGlobal(buffer);
