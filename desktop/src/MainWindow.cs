@@ -17,7 +17,7 @@ internal sealed class MainWindow : Window
     private readonly SplashOverlay splashOverlay;
     private readonly Grid errorOverlay;
     private readonly DesktopPresentationState presentationState;
-    private Task initializationTask;
+    private readonly RetryableAsyncOperation initialization = new RetryableAsyncOperation();
     private Uri allowedOrigin;
 
     internal MainWindow(AppPaths paths)
@@ -70,9 +70,7 @@ internal sealed class MainWindow : Window
     internal Task InitializeWebViewAsync()
     {
         VerifyAccess();
-        if (initializationTask == null)
-            initializationTask = InitializeWebViewCoreAsync();
-        return initializationTask;
+        return initialization.Run(InitializeWebViewCoreAsync);
     }
 
     internal async Task NavigateToDsh(Uri uri)
@@ -221,6 +219,8 @@ internal sealed class MainWindow : Window
         CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(null, paths.WebView2Data);
         await webView.EnsureCoreWebView2Async(environment);
         webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
+        webView.CoreWebView2.NavigationStarting -= OnNavigationStarting;
+        webView.CoreWebView2.NewWindowRequested -= OnNewWindowRequested;
         webView.CoreWebView2.NavigationStarting += OnNavigationStarting;
         webView.CoreWebView2.NewWindowRequested += OnNewWindowRequested;
     }

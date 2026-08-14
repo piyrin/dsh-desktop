@@ -22,6 +22,8 @@ $sources = @(
   (Join-Path $root 'tests\DshReadinessTests.cs'),
   (Join-Path $root 'tests\BackendOwnershipTests.cs'),
   (Join-Path $root 'tests\ActivationProtocolTests.cs'),
+  (Join-Path $root 'tests\DesktopApplicationTests.cs'),
+  (Join-Path $root 'tests\TrayControllerTests.cs'),
   (Join-Path $root 'src\AppLogger.cs'),
   (Join-Path $root 'src\JobObject.cs'),
   (Join-Path $root 'src\AppPaths.cs'),
@@ -35,6 +37,8 @@ $sources = @(
   ,(Join-Path $root 'src\DshReadiness.cs')
   ,(Join-Path $root 'src\BackendSupervisor.cs')
   ,(Join-Path $root 'src\SingleInstanceCoordinator.cs')
+  ,(Join-Path $root 'src\TrayController.cs')
+  ,(Join-Path $root 'src\DesktopApplication.cs')
 )
 & $compiler /nologo /target:exe `
   "/reference:$(Join-Path $frameworkRoot 'System.Net.Http.dll')" `

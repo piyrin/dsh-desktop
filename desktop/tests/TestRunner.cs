@@ -57,6 +57,8 @@ internal sealed class TestRunner
         DshReadinessTests.Register(runner);
         BackendOwnershipTests.Register(runner);
         ActivationProtocolTests.Register(runner);
+        DesktopApplicationTests.Register(runner);
+        TrayControllerTests.Register(runner);
         return runner.Run(filter);
     }
 

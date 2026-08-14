@@ -24,5 +24,11 @@ internal static class StartupPolicyTests
             AssertEx.False(StartupPolicy.ShouldShowAnimatedSplash(
                 OpenReason.SecondaryActivation, TimeSpan.FromSeconds(20), false));
         });
+        runner.Add("all restore reasons bypass splash", delegate {
+            AssertEx.False(StartupPolicy.ShouldShowAnimatedSplash(
+                OpenReason.TrayRestore, TimeSpan.FromMinutes(1), false));
+            AssertEx.False(StartupPolicy.ShouldShowAnimatedSplash(
+                OpenReason.SecondaryActivation, TimeSpan.FromMinutes(1), false));
+        });
     }
 }

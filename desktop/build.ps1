@@ -87,6 +87,8 @@ $sources = @(
     (Join-Path $desktopRoot 'src\AppAssets.cs'),
     (Join-Path $desktopRoot 'src\SplashOverlay.cs'),
     (Join-Path $desktopRoot 'src\MainWindow.cs'),
+    (Join-Path $desktopRoot 'src\TrayController.cs'),
+    (Join-Path $desktopRoot 'src\DesktopApplication.cs'),
     (Join-Path $desktopRoot 'src\Program.cs')
 )
 
@@ -106,6 +108,7 @@ $compilerArguments = @(
     "/reference:$(Join-Path $frameworkRoot 'System.dll')",
     "/reference:$(Join-Path $frameworkRoot 'System.Core.dll')",
     "/reference:$(Join-Path $frameworkRoot 'System.Drawing.dll')",
+    "/reference:$(Join-Path $frameworkRoot 'System.Windows.Forms.dll')",
     "/reference:$(Join-Path $frameworkRoot 'System.Net.Http.dll')",
     "/reference:$(Join-Path $frameworkRoot 'System.Xml.dll')",
     "/reference:$(Join-Path $frameworkRoot 'System.Xaml.dll')",
