@@ -47,6 +47,34 @@ internal static class BackendOwnershipTests
             AssertEx.True(cancelled);
             AssertEx.Equal(BackendOwnership.None, supervisor.Ownership);
         });
+        runner.Add("cancellation during probe never launches backend", delegate {
+            string helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "test-output", "NoWindowHelper.exe");
+            AppPaths paths = AppPaths.Create(Path.Combine(Path.GetTempPath(), "dsh-task4-cancel-mid"), Path.GetDirectoryName(helper));
+            BackendSupervisor supervisor = new BackendSupervisor(CreateLaunchSpec(helper), paths);
+            System.Threading.CancellationTokenSource cancellation = new System.Threading.CancellationTokenSource();
+            cancellation.CancelAfter(20);
+            bool cancelled = false;
+            try { supervisor.EnsureReadyAsync(cancellation.Token).GetAwaiter().GetResult(); }
+            catch (OperationCanceledException) { cancelled = true; }
+            AssertEx.True(cancelled);
+            AssertEx.Equal(BackendOwnership.None, supervisor.Ownership);
+        });
+        runner.Add("failed suspended setup terminates only the new child", delegate {
+            string helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "test-output", "NoWindowHelper.exe");
+            AssertEx.True(BackendSupervisor.FailedSetupCleansUpForTestingAsync(CreateLaunchSpec(helper)).GetAwaiter().GetResult());
+        });
+        runner.Add("new backend generation clears prior stderr tail", delegate {
+            string helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "test-output", "EarlyExitHelper.exe");
+            AppPaths paths = AppPaths.Create(Path.Combine(Path.GetTempPath(), "dsh-task4-tail"), Path.GetDirectoryName(helper));
+            BackendLaunchSpec spec = CreateLaunchSpec(helper);
+            Set(spec, "<Arguments>k__BackingField", "stderr");
+            BackendSupervisor supervisor = new BackendSupervisor(spec, paths);
+            ReadinessResult first = supervisor.EnsureReadyAsync(System.Threading.CancellationToken.None).GetAwaiter().GetResult();
+            AssertEx.True(first.Detail.IndexOf("first-generation-error", StringComparison.Ordinal) >= 0);
+            Set(spec, "<Arguments>k__BackingField", String.Empty);
+            ReadinessResult second = supervisor.EnsureReadyAsync(System.Threading.CancellationToken.None).GetAwaiter().GetResult();
+            AssertEx.True(second.Detail.IndexOf("first-generation-error", StringComparison.Ordinal) < 0);
+        });
     }
 
     private static BackendLaunchSpec CreateLaunchSpec(string helper)

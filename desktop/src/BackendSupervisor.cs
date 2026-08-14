@@ -58,6 +58,7 @@ internal sealed class RollingTextTail
             if (text.Length > capacity) text.Remove(0, text.Length - capacity);
         }
     }
+    internal void Clear() { lock (sync) { text.Length = 0; } }
     internal string Snapshot() { lock (sync) { return text.ToString(); } }
 }
 
@@ -71,6 +72,7 @@ internal sealed class BackendSupervisor
     private readonly SemaphoreSlim stateGate = new SemaphoreSlim(1, 1);
     private Process ownedProcess;
     private JobObject ownedJob;
+    private SuspendedBackendProcess ownedNativeProcess;
     private Task standardOutput;
     private Task standardError;
     private readonly RollingTextTail standardErrorTail = new RollingTextTail(2048);
@@ -100,6 +102,7 @@ internal sealed class BackendSupervisor
     private async Task<ReadinessResult> EnsureReadyCoreAsync(CancellationToken token)
     {
         ReadinessResult probe = await DshReadiness.WaitAsync(ReadinessUri, ProbeTimeout, token).ConfigureAwait(false);
+        token.ThrowIfCancellationRequested();
         if (probe.State == ReadinessState.Ready)
         {
             if (Ownership != BackendOwnership.Owned)
@@ -121,6 +124,7 @@ internal sealed class BackendSupervisor
 
         try
         {
+            token.ThrowIfCancellationRequested();
             StartOwnedProcess();
         }
         catch (Exception exception)
@@ -143,6 +147,7 @@ internal sealed class BackendSupervisor
                 return await EnsureReadyCoreAsync(token).ConfigureAwait(false);
             }
             await StopOwnedCoreAsync().ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
             return await EnsureReadyCoreAsync(token).ConfigureAwait(false);
         }
         finally { stateGate.Release(); }
@@ -162,9 +167,11 @@ internal sealed class BackendSupervisor
 
         Process process = ownedProcess;
         JobObject job = ownedJob;
+        SuspendedBackendProcess native = ownedNativeProcess;
         try
         {
             if (job != null) job.Dispose();
+            if (native != null) native.Dispose();
             if (process != null)
                 await Task.Factory.StartNew(delegate { process.WaitForExit(5000); }).ConfigureAwait(false);
         }
@@ -172,6 +179,7 @@ internal sealed class BackendSupervisor
         {
             ownedJob = null;
             ownedProcess = null;
+            ownedNativeProcess = null;
             standardOutput = null;
             standardError = null;
             Ownership = BackendOwnership.None;
@@ -212,22 +220,40 @@ internal sealed class BackendSupervisor
         }
     }
 
+    internal static async Task<bool> FailedSetupCleansUpForTestingAsync(BackendLaunchSpec spec)
+    {
+        int processId;
+        using (SuspendedBackendProcess process = SuspendedBackendProcess.Start(spec))
+        {
+            processId = process.ProcessId;
+        }
+        await Task.Delay(30).ConfigureAwait(false);
+        try
+        {
+            using (Process process = Process.GetProcessById(processId))
+                return process.HasExited;
+        }
+        catch (ArgumentException) { return true; }
+    }
+
     private void StartOwnedProcess()
     {
         Process process = new Process();
         JobObject job = null;
+        SuspendedBackendProcess native = null;
         bool started = false;
         try
         {
-            SuspendedBackendProcess native = SuspendedBackendProcess.Start(launchSpec);
+            standardErrorTail.Clear();
+            native = SuspendedBackendProcess.Start(launchSpec);
             started = true;
             job = new JobObject();
             job.AssignHandle(native.ProcessHandle);
             process = Process.GetProcessById(native.ProcessId);
             native.Resume();
-            native.ReleaseProcessHandle();
             ownedProcess = process;
             ownedJob = job;
+            ownedNativeProcess = native;
             Ownership = BackendOwnership.Owned;
             standardOutput = CaptureOutputAsync(native.StandardOutput, false);
             standardError = CaptureOutputAsync(native.StandardError, true);
@@ -237,12 +263,14 @@ internal sealed class BackendSupervisor
         {
             if (job != null)
                 job.Dispose();
-            else if (started && !process.HasExited)
+            else if (native == null && started && !process.HasExited)
                 process.Kill();
+            if (native != null) native.Dispose();
             if (ownedProcess == process)
             {
                 ownedProcess = null;
                 ownedJob = null;
+                ownedNativeProcess = null;
                 standardOutput = null;
                 standardError = null;
                 Ownership = BackendOwnership.None;
@@ -261,15 +289,17 @@ internal sealed class BackendSupervisor
                 return CreateEarlyExitResult(stopwatch.Elapsed);
 
             ReadinessResult result = await DshReadiness.WaitAsync(ReadinessUri, TimeSpan.FromMilliseconds(150), token).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
             if (result.State != ReadinessState.NotReady)
                 return result;
         }
+        token.ThrowIfCancellationRequested();
         return new ReadinessResult(ReadinessState.NotReady, stopwatch.Elapsed, "DSH did not become ready within 30 seconds. The owned backend is still running; use Retry or Restart.");
     }
 
     private ReadinessResult CreateEarlyExitResult(TimeSpan elapsed)
     {
-        int exitCode = ownedProcess == null ? -1 : ownedProcess.ExitCode;
+        int exitCode = ownedNativeProcess == null ? -1 : ownedNativeProcess.GetExitCode();
         return new ReadinessResult(ReadinessState.NotReady, elapsed, "DSH exited with code " + exitCode + ". stderr: " + standardErrorTail.Snapshot());
     }
 
@@ -292,12 +322,16 @@ internal sealed class BackendSupervisor
     {
         JobObject job = ownedJob;
         Process process = ownedProcess;
+        SuspendedBackendProcess native = ownedNativeProcess;
         ownedJob = null;
         ownedProcess = null;
+        ownedNativeProcess = null;
         standardOutput = null;
         standardError = null;
+        standardErrorTail.Clear();
         Ownership = BackendOwnership.None;
         if (job != null) job.Dispose();
+        if (native != null) native.Dispose();
         if (process != null) process.Dispose();
     }
 
@@ -400,10 +434,22 @@ internal sealed class SuspendedBackendProcess : IDisposable
         return unchecked((int)code);
     }
 
+    internal int GetExitCode()
+    {
+        uint code;
+        if (!GetExitCodeProcess(processHandle, out code)) return -1;
+        return unchecked((int)code);
+    }
+
     public void Dispose()
     {
         if (threadHandle != IntPtr.Zero) CloseHandle(threadHandle);
-        if (processHandle != IntPtr.Zero) CloseHandle(processHandle);
+        if (processHandle != IntPtr.Zero)
+        {
+            TerminateProcess(processHandle, 1);
+            WaitForSingleObject(processHandle, 5000);
+            CloseHandle(processHandle);
+        }
         threadHandle = IntPtr.Zero; processHandle = IntPtr.Zero;
         if (StandardOutput != null) StandardOutput.Dispose();
         if (StandardError != null) StandardError.Dispose();
@@ -429,6 +475,7 @@ internal sealed class SuspendedBackendProcess : IDisposable
     [DllImport("kernel32.dll")] private static extern IntPtr GetStdHandle(int standardHandle);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool TerminateProcess(IntPtr process, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool CloseHandle(IntPtr handle);
 }

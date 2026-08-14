@@ -4,9 +4,12 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $output = Join-Path $root 'tests\Task1Tests.exe'
 $testOutput = Join-Path $root 'test-output'
 $helperOutput = Join-Path $testOutput 'NoWindowHelper.exe'
+$earlyExitHelperOutput = Join-Path $testOutput 'EarlyExitHelper.exe'
 $compiler = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $null = New-Item -ItemType Directory -Force -Path $testOutput
 & $compiler /nologo /target:exe /out:$helperOutput (Join-Path $root 'tests\NoWindowHelper.cs')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& $compiler /nologo /target:exe /out:$earlyExitHelperOutput (Join-Path $root 'tests\EarlyExitHelper.cs')
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $sources = @(
   (Join-Path $root 'tests\TestRunner.cs'),
