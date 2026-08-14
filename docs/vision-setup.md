@@ -2,10 +2,11 @@
 
 目标架构：**主模型保持 DeepSeek（纯文本），识图时由 MCP 工具 `mcp__vision__describe_image` 把图片发给视觉端点，拿回纯文本描述。**
 
-- 脚本：`E:\dsh\dsh-vision-mcp.cjs`（零依赖 MCP stdio 服务器，OpenAI 兼容协议）
+- 脚本：[`dsh-vision-mcp.cjs`](../dsh-vision-mcp.cjs)（零依赖 MCP stdio 服务器，OpenAI 兼容协议）
 - 插件：`dsh-vision-inline`（消息管线插件：贴进对话框的图片自动转文字描述）
-- 接入：`C:\Users\piyrin\.dsh\profiles\web\cordis.patch.yml` 的 `mcp-vision`、`vision-inline` 行
+- 接入：`%USERPROFILE%\.dsh\profiles\web\cordis.patch.yml` 的 `mcp-vision`、`vision-inline` 行
 - 用法：**直接往对话框粘贴/拖入一张或多张图片发送即可**；也可 `Win+Shift+S` 截图后说「看图」（剪贴板路线）
+- 本地测试样例（如有）统一放在 [`samples/vision/`](../samples/vision/)；图片默认被 Git 忽略，仅目录占位文件会发布。
 
 ## 对话框贴图直发（vision-inline 插件，主用法）
 

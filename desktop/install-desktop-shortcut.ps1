@@ -1,6 +1,7 @@
 param(
     [string]$DesktopDirectoryOverride,
-    [string]$ApplicationPathOverride
+    [string]$ApplicationPathOverride,
+    [string]$IconPathOverride
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,6 +24,7 @@ function Resolve-DesktopDirectory([string]$overridePath) {
 }
 
 $desktopRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repositoryRoot = Split-Path -Parent $desktopRoot
 $applicationPath = if ([String]::IsNullOrWhiteSpace($ApplicationPathOverride)) {
     Join-Path $desktopRoot 'publish\DeepSeek Harness.exe'
 }
@@ -33,6 +35,17 @@ $applicationPath = [System.IO.Path]::GetFullPath($applicationPath)
 
 if (-not (Test-Path -LiteralPath $applicationPath -PathType Leaf)) {
     throw "Build the desktop application first. Executable not found: $applicationPath"
+}
+
+$iconPath = if ([String]::IsNullOrWhiteSpace($IconPathOverride)) {
+    Join-Path $repositoryRoot 'assets\branding\dsh-whale.ico'
+}
+else {
+    $IconPathOverride
+}
+$iconPath = [System.IO.Path]::GetFullPath($iconPath)
+if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
+    throw "Shortcut icon not found: $iconPath"
 }
 
 $desktopDirectory = Resolve-DesktopDirectory $DesktopDirectoryOverride
@@ -48,7 +61,7 @@ try {
     $shortcut = $shell.CreateShortcut($shortcutPath)
     $shortcut.TargetPath = $applicationPath
     $shortcut.WorkingDirectory = $workingDirectory
-    $shortcut.IconLocation = "$applicationPath,0"
+    $shortcut.IconLocation = "$iconPath,0"
     $shortcut.WindowStyle = 1
     $shortcut.Save()
 }
@@ -59,3 +72,4 @@ finally {
 
 Write-Host "Desktop shortcut installed: $shortcutPath"
 Write-Host "Target: $applicationPath"
+Write-Host "Icon: $iconPath"

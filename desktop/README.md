@@ -1,6 +1,8 @@
-# DeepSeek Harness desktop shell
+# DSH Desktop — DeepSeek Harness shell
 
 This Windows desktop shell starts the installed DeepSeek Harness (DSH) service without a terminal, hosts its WebUI in a native WebView2 window, and keeps it available from the notification area.
+
+See the [project overview](../README.md) for repository-wide setup and the optional [vision integration guide](../docs/vision-setup.md) for image-description support.
 
 ## Requirements
 
@@ -35,7 +37,7 @@ Build first, then create or update `DeepSeek Harness.lnk` in the Windows Desktop
 powershell -NoProfile -ExecutionPolicy Bypass -File .\desktop\install-desktop-shortcut.ps1
 ```
 
-The installer resolves the real Desktop directory through Windows, updates only `DeepSeek Harness.lnk`, and leaves unrelated shortcuts unchanged. Double-click the resulting shortcut to launch without a terminal. For a direct launch:
+The installer resolves the real Desktop directory through Windows, uses `E:\dsh\assets\branding\dsh-whale.ico`, updates only `DeepSeek Harness.lnk`, and leaves unrelated shortcuts unchanged. Double-click the resulting shortcut to launch without a terminal. For a direct launch:
 
 ```powershell
 & '.\desktop\publish\DeepSeek Harness.exe'

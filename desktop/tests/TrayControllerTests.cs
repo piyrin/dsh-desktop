@@ -63,7 +63,7 @@ internal static class TrayControllerTests
         runner.Add("native tray construction disposes the claimed icon when a property setter throws", delegate {
             ThrowingNativeNotifyIconFactory nativeFactory = new ThrowingNativeNotifyIconFactory();
             string iconPath = Path.GetFullPath(Path.Combine(
-                AppDomain.CurrentDomain.BaseDirectory, "..", "..", "dsh-whale.ico"));
+                AppDomain.CurrentDomain.BaseDirectory, "..", "..", "assets", "branding", "dsh-whale.ico"));
             TrayMenuEntry[] entries = new[]
             {
                 new TrayMenuEntry("Open", TrayCommand.Open, false)

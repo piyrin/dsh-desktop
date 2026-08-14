@@ -12,13 +12,16 @@ $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("DshDesktopShortcutTest
 $fakeDesktop = Join-Path $testRoot 'Desktop'
 $fakePublish = Join-Path $testRoot 'publish'
 $fakeExecutable = Join-Path $fakePublish 'DeepSeek Harness.exe'
+$fakeIcon = Join-Path $testRoot 'assets\branding\dsh-whale.ico'
 $shortcutPath = Join-Path $fakeDesktop 'DeepSeek Harness.lnk'
 $unrelatedShortcut = Join-Path $fakeDesktop 'Other Application.lnk'
 
 try {
     $null = New-Item -ItemType Directory -Path $fakeDesktop
     $null = New-Item -ItemType Directory -Path $fakePublish
+    $null = New-Item -ItemType Directory -Path (Split-Path -Parent $fakeIcon)
     Set-Content -LiteralPath $fakeExecutable -Value 'test executable placeholder' -NoNewline
+    Set-Content -LiteralPath $fakeIcon -Value 'test icon placeholder' -NoNewline
     Set-Content -LiteralPath $unrelatedShortcut -Value 'unrelated shortcut sentinel' -NoNewline
 
     $setupShell = New-Object -ComObject WScript.Shell
@@ -32,7 +35,7 @@ try {
         [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($setupShell)
     }
 
-    & $installer -DesktopDirectoryOverride $fakeDesktop -ApplicationPathOverride $fakeExecutable
+    & $installer -DesktopDirectoryOverride $fakeDesktop -ApplicationPathOverride $fakeExecutable -IconPathOverride $fakeIcon
 
     if (-not (Test-Path -LiteralPath $shortcutPath -PathType Leaf)) {
         throw "Installer did not create $shortcutPath."
@@ -44,7 +47,7 @@ try {
         $shortcut = $shell.CreateShortcut($shortcutPath)
         Assert-Equal ([System.IO.Path]::GetFullPath($fakeExecutable)) $shortcut.TargetPath 'TargetPath mismatch.'
         Assert-Equal ([System.IO.Path]::GetFullPath($fakePublish)) $shortcut.WorkingDirectory 'WorkingDirectory mismatch.'
-        Assert-Equal (([System.IO.Path]::GetFullPath($fakeExecutable)) + ',0') $shortcut.IconLocation 'IconLocation mismatch.'
+        Assert-Equal (([System.IO.Path]::GetFullPath($fakeIcon)) + ',0') $shortcut.IconLocation 'IconLocation mismatch.'
         Assert-Equal 1 $shortcut.WindowStyle 'WindowStyle mismatch.'
     }
     finally {

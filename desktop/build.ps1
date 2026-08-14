@@ -52,7 +52,7 @@ $webViewWpf = Join-Path $packageRoot 'lib\net462\Microsoft.Web.WebView2.Wpf.dll'
 $webViewLoader = Join-Path $packageRoot 'build\native\x64\WebView2Loader.dll'
 $webViewLicense = Join-Path $packageRoot 'LICENSE.txt'
 $manifest = Join-Path $desktopRoot 'assets\app.manifest'
-$icon = Join-Path $repositoryRoot 'dsh-whale.ico'
+$icon = Join-Path $repositoryRoot 'assets\branding\dsh-whale.ico'
 
 $requiredBuildInputs = @(
     $compiler,

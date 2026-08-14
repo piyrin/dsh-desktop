@@ -57,4 +57,7 @@ if ($Filter) { $arguments += '--filter'; $arguments += $Filter }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 & (Join-Path $root 'tests\InstallDesktopShortcutTests.ps1')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+& (Join-Path $root 'tests\RepositoryLayoutTests.ps1')
 exit $LASTEXITCODE
