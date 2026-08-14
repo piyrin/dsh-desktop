@@ -45,6 +45,7 @@ internal sealed class TestRunner
         StartupPolicyTests.Register(runner);
         DshInstallationTests.Register(runner);
         DshReadinessTests.Register(runner);
+        BackendOwnershipTests.Register(runner);
         return runner.Run(filter);
     }
 }
