@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using Microsoft.Win32.SafeHandles;
 
 internal static class ActivationProtocol
 {
@@ -225,10 +227,16 @@ internal sealed class SingleInstanceCoordinator : IDisposable
                 if (!write.AsyncWaitHandle.WaitOne(RemainingMilliseconds(stopwatch, budgetMilliseconds)))
                 {
                     attempt.Expire();
+                    write.AsyncWaitHandle.WaitOne();
+                    try { client.EndWrite(write); }
+                    catch (IOException) { }
+                    catch (ObjectDisposedException) { }
+                    catch (OperationCanceledException) { }
                     return false;
                 }
                 client.EndWrite(write);
                 if (attempt.IsExpired) return false;
+                client.Flush();
                 return !attempt.IsExpired && RemainingMilliseconds(stopwatch, budgetMilliseconds) >= 0;
             }
             catch (IOException)
@@ -241,6 +249,7 @@ internal sealed class SingleInstanceCoordinator : IDisposable
             catch (TimeoutException) { return false; }
             catch (UnauthorizedAccessException) { return false; }
             catch (ObjectDisposedException) { return false; }
+            catch (OperationCanceledException) { return false; }
             finally
             {
                 attempt.ClearClient(client);
@@ -283,6 +292,29 @@ internal sealed class SingleInstanceCoordinator : IDisposable
     {
         long remaining = budgetMilliseconds - stopwatch.ElapsedMilliseconds;
         return remaining <= 0 ? 0 : (int)remaining;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CancelIoEx(IntPtr fileHandle, IntPtr overlapped);
+
+    private static void CancelPendingIo(NamedPipeClientStream client)
+    {
+        try
+        {
+            SafePipeHandle handle = client.SafePipeHandle;
+            bool addedReference = false;
+            try
+            {
+                handle.DangerousAddRef(ref addedReference);
+                CancelIoEx(handle.DangerousGetHandle(), IntPtr.Zero);
+            }
+            finally
+            {
+                if (addedReference) handle.DangerousRelease();
+            }
+        }
+        catch (IOException) { }
+        catch (ObjectDisposedException) { }
     }
 
     private static void WakeListener()
@@ -341,7 +373,11 @@ internal sealed class SingleInstanceCoordinator : IDisposable
                 expired = true;
                 clientToClose = client;
             }
-            if (clientToClose != null) clientToClose.Dispose();
+            if (clientToClose != null)
+            {
+                CancelPendingIo(clientToClose);
+                clientToClose.Dispose();
+            }
         }
     }
 }

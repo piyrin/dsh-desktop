@@ -186,6 +186,17 @@ internal static class ActivationProtocolTests
                 AssertEx.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(500));
                 server.ReleaseRead.Set();
                 AssertEx.True(server.ClientDisconnected.WaitOne(500));
+                AssertEx.Equal(0, server.BytesReceived);
+            }
+        });
+        runner.Add("signal primary flushes exact activation frame", delegate {
+            using (RecordingPipeServer server = new RecordingPipeServer())
+            using (SingleInstanceCoordinator secondary = new SingleInstanceCoordinator())
+            {
+                server.Start();
+                AssertEx.True(secondary.SignalPrimary(TimeSpan.FromMilliseconds(1500)));
+                AssertEx.True(server.MessageReceived.WaitOne(1000));
+                AssertEx.Equal("ACTIVATE\n", server.Message);
             }
         });
     }
@@ -237,6 +248,7 @@ internal static class ActivationProtocolTests
         internal ManualResetEvent ClientConnected { get; private set; }
         internal ManualResetEvent ReleaseRead { get; private set; }
         internal ManualResetEvent ClientDisconnected { get; private set; }
+        internal int BytesReceived { get; private set; }
 
         internal void Start()
         {
@@ -260,8 +272,56 @@ internal static class ActivationProtocolTests
                 server.WaitForConnection();
                 ClientConnected.Set();
                 ReleaseRead.WaitOne();
-                while (server.ReadByte() >= 0) { }
+                int value;
+                while ((value = server.ReadByte()) >= 0) BytesReceived++;
                 ClientDisconnected.Set();
+            }
+            catch (IOException) { }
+            catch (ObjectDisposedException) { }
+        }
+    }
+
+    private sealed class RecordingPipeServer : IDisposable
+    {
+        private readonly NamedPipeServerStream server = new NamedPipeServerStream("DeepSeekHarness.Desktop.Activation.v1", PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        private readonly Thread thread;
+
+        internal RecordingPipeServer()
+        {
+            MessageReceived = new ManualResetEvent(false);
+            thread = new Thread(new ThreadStart(Run));
+            thread.IsBackground = true;
+        }
+
+        internal ManualResetEvent MessageReceived { get; private set; }
+        internal string Message { get; private set; }
+
+        internal void Start()
+        {
+            thread.Start();
+        }
+
+        public void Dispose()
+        {
+            server.Dispose();
+            thread.Join(1000);
+            MessageReceived.Dispose();
+        }
+
+        private void Run()
+        {
+            try
+            {
+                System.Text.StringBuilder message = new System.Text.StringBuilder();
+                server.WaitForConnection();
+                int value;
+                while ((value = server.ReadByte()) >= 0)
+                {
+                    message.Append((char)value);
+                    if (value == '\n') break;
+                }
+                Message = message.ToString();
+                MessageReceived.Set();
             }
             catch (IOException) { }
             catch (ObjectDisposedException) { }
