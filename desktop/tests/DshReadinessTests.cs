@@ -13,6 +13,10 @@ internal static class DshReadinessTests
             AssertEx.Equal(ReadinessState.Ready,
                 DshReadiness.Classify(200, "<title>DeepSeek Harness</title>", null));
         });
+        runner.Add("DshReadiness case variant title marker is a port conflict", delegate {
+            AssertEx.Equal(ReadinessState.PortConflict,
+                DshReadiness.Classify(200, "<TITLE>deepseek harness</TITLE>", null));
+        });
         runner.Add("DshReadiness unrelated html is a port conflict", delegate {
             AssertEx.Equal(ReadinessState.PortConflict,
                 DshReadiness.Classify(200, "<title>Other App</title>", null));

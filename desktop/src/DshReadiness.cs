@@ -38,7 +38,7 @@ internal static class DshReadiness
         if (statusCode.Value < 200 || statusCode.Value >= 300)
             return ReadinessState.PortConflict;
 
-        if (!String.IsNullOrEmpty(body) && body.IndexOf("<title>DeepSeek Harness</title>", StringComparison.OrdinalIgnoreCase) >= 0)
+        if (!String.IsNullOrEmpty(body) && body.IndexOf("<title>DeepSeek Harness</title>", StringComparison.Ordinal) >= 0)
             return ReadinessState.Ready;
 
         return ReadinessState.PortConflict;
