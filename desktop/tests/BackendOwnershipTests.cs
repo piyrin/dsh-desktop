@@ -25,6 +25,28 @@ internal static class BackendOwnershipTests
             AssertEx.Equal(0, result.ExitCode);
             AssertEx.Equal("hidden-helper-ready", result.StandardOutput);
         });
+        runner.Add("suspended owned launch captures helper output", delegate {
+            string helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "test-output", "NoWindowHelper.exe");
+            BackendProcessResult result = BackendSupervisor.LaunchOwnedForTestingAsync(CreateLaunchSpec(helper)).GetAwaiter().GetResult();
+            AssertEx.Equal(0, result.ExitCode);
+            AssertEx.Equal("hidden-helper-ready", result.StandardOutput);
+        });
+        runner.Add("rolling stderr tail is bounded", delegate {
+            RollingTextTail tail = new RollingTextTail(4);
+            tail.Append("abc");
+            tail.Append("def");
+            AssertEx.Equal("cdef", tail.Snapshot());
+        });
+        runner.Add("cancelled ensure never launches backend", delegate {
+            string helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "test-output", "NoWindowHelper.exe");
+            AppPaths paths = AppPaths.Create(Path.Combine(Path.GetTempPath(), "dsh-task4-cancel"), Path.GetDirectoryName(helper));
+            BackendSupervisor supervisor = new BackendSupervisor(CreateLaunchSpec(helper), paths);
+            bool cancelled = false;
+            try { supervisor.EnsureReadyAsync(new System.Threading.CancellationToken(true)).GetAwaiter().GetResult(); }
+            catch (OperationCanceledException) { cancelled = true; }
+            AssertEx.True(cancelled);
+            AssertEx.Equal(BackendOwnership.None, supervisor.Ownership);
+        });
     }
 
     private static BackendLaunchSpec CreateLaunchSpec(string helper)

@@ -39,6 +39,13 @@ internal sealed class JobObject : IDisposable
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to assign backend process to job object.");
     }
 
+    internal void AssignHandle(IntPtr processHandle)
+    {
+        if (handle == IntPtr.Zero) throw new ObjectDisposedException("JobObject");
+        if (!AssignProcessToJobObject(handle, processHandle))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to assign backend process to job object.");
+    }
+
     public void Dispose()
     {
         IntPtr current = handle;
