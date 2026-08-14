@@ -107,6 +107,21 @@ internal sealed class RetryableAsyncOperation
 
 internal sealed class DesktopApplication
 {
+    private sealed class StartupPresentationOperation
+    {
+        private int animationSuppressed;
+
+        internal bool IsAnimationSuppressed
+        {
+            get { return Interlocked.CompareExchange(ref animationSuppressed, 0, 0) != 0; }
+        }
+
+        internal void SuppressAnimation()
+        {
+            Interlocked.Exchange(ref animationSuppressed, 1);
+        }
+    }
+
     private readonly IDesktopWindow window;
     private readonly IDesktopBackend backend;
     private readonly IDesktopTray tray;
@@ -119,9 +134,11 @@ internal sealed class DesktopApplication
     private readonly CancellationTokenSource lifetimeCancellation = new CancellationTokenSource();
     private readonly SemaphoreSlim operationGate = new SemaphoreSlim(1, 1);
     private readonly object exitSync = new object();
+    private readonly object presentationSync = new object();
     private volatile bool explicitExitRequested;
     private bool hiddenByClose;
     private bool hasFinalPresentation;
+    private StartupPresentationOperation activePresentationOperation;
     private Task exitTask;
 
     internal DesktopApplication(
@@ -196,7 +213,14 @@ internal sealed class DesktopApplication
         }
         if (explicitExitRequested) return;
         hiddenByClose = false;
-        if (hasFinalPresentation)
+        bool showFinalPresentation;
+        lock (presentationSync)
+        {
+            showFinalPresentation = hasFinalPresentation;
+            if (!showFinalPresentation && activePresentationOperation != null)
+                activePresentationOperation.SuppressAnimation();
+        }
+        if (showFinalPresentation)
             window.RestoreWithoutAnimation();
         else
             window.ShowStaticWaiting();
@@ -228,9 +252,11 @@ internal sealed class DesktopApplication
         Func<CancellationToken, Task<ReadinessResult>> ensureReady)
     {
         await operationGate.WaitAsync();
+        StartupPresentationOperation presentationOperation = null;
         try
         {
             if (explicitExitRequested) return;
+            presentationOperation = BeginPresentationOperation();
             CancellationToken token = lifetimeCancellation.Token;
             IStartupTimer timer = InvokeTimer();
             Task initialization = InvokeTask(window.InitializeWebViewAsync);
@@ -244,11 +270,13 @@ internal sealed class DesktopApplication
             if (Object.ReferenceEquals(first, threshold)
                 && threshold.Status == TaskStatus.RanToCompletion
                 && !readiness.IsCompleted
+                && !explicitExitRequested
                 && !hiddenByClose
                 && StartupPolicy.ShouldShowAnimatedSplash(
                     reason,
                     timer.Elapsed,
-                    false))
+                    false)
+                && !presentationOperation.IsAnimationSuppressed)
             {
                 window.ShowAnimatedSplash();
             }
@@ -292,11 +320,13 @@ internal sealed class DesktopApplication
             }
 
             if (explicitExitRequested) return;
-            hasFinalPresentation = true;
+            lock (presentationSync) { hasFinalPresentation = true; }
             window.PresentWebContent(!hiddenByClose);
         }
         finally
         {
+            if (presentationOperation != null)
+                EndPresentationOperation(presentationOperation);
             operationGate.Release();
         }
     }
@@ -335,6 +365,22 @@ internal sealed class DesktopApplication
         catch (Exception exception)
         {
             throw new InvalidOperationException("Unable to create the startup timer.", exception);
+        }
+    }
+
+    private StartupPresentationOperation BeginPresentationOperation()
+    {
+        StartupPresentationOperation operation = new StartupPresentationOperation();
+        lock (presentationSync) { activePresentationOperation = operation; }
+        return operation;
+    }
+
+    private void EndPresentationOperation(StartupPresentationOperation operation)
+    {
+        lock (presentationSync)
+        {
+            if (Object.ReferenceEquals(activePresentationOperation, operation))
+                activePresentationOperation = null;
         }
     }
 
@@ -396,7 +442,7 @@ internal sealed class DesktopApplication
     private void ShowServiceError(string title, string detail)
     {
         if (explicitExitRequested) return;
-        hasFinalPresentation = true;
+        lock (presentationSync) { hasFinalPresentation = true; }
         window.PresentError(
             title,
             detail ?? String.Empty,

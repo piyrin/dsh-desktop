@@ -239,6 +239,37 @@ internal static class DesktopApplicationTests
             AssertEx.Equal(1, harness.Window.WebCalls);
         });
 
+        runner.Add("secondary activation suppresses only its cold start splash generation", delegate {
+            DesktopHarness harness = new DesktopHarness();
+            harness.Timer.ElapsedValue = TimeSpan.FromMilliseconds(3001);
+            Task run = harness.Application.RunColdStartAsync();
+
+            harness.Application.Restore(OpenReason.SecondaryActivation);
+            harness.Timer.ThresholdCompletion.SetResult(true);
+            AssertEx.True(harness.Timer.ElapsedObserved.Task.Wait(1000));
+
+            AssertEx.Equal(1, harness.Window.WaitingCalls);
+            AssertEx.Equal(0, harness.Window.SplashCalls);
+            AssertEx.Equal(0, harness.Window.WebCalls);
+            AssertEx.True(harness.Window.IsVisible);
+            AssertEx.False(run.IsCompleted);
+
+            harness.Window.InitializeCompletion.SetResult(true);
+            harness.Backend.EnsureCompletion.SetResult(Ready());
+            AssertEx.True(run.Wait(1000));
+
+            harness.Timer.ThresholdCompletion = new TaskCompletionSource<bool>();
+            harness.Timer.ElapsedObserved = new TaskCompletionSource<bool>();
+            harness.Backend.OwnershipValue = BackendOwnership.Owned;
+            Task restart = harness.Application.RestartServiceAsync();
+            harness.Timer.ThresholdCompletion.SetResult(true);
+            AssertEx.True(harness.Timer.ElapsedObserved.Task.Wait(1000));
+
+            AssertEx.Equal(1, harness.Window.SplashCalls);
+            harness.Backend.RestartCompletion.SetResult(Ready());
+            AssertEx.True(restart.Wait(1000));
+        });
+
         runner.Add("ready completion after close never transiently shows the window", delegate {
             DesktopHarness harness = new DesktopHarness();
             harness.Timer.ElapsedValue = TimeSpan.FromMilliseconds(3001);
@@ -533,9 +564,17 @@ internal static class DesktopApplicationTests
 
     private sealed class FakeStartupTimer : IStartupTimer
     {
-        internal readonly TaskCompletionSource<bool> ThresholdCompletion = new TaskCompletionSource<bool>();
+        internal TaskCompletionSource<bool> ThresholdCompletion = new TaskCompletionSource<bool>();
+        internal TaskCompletionSource<bool> ElapsedObserved = new TaskCompletionSource<bool>();
         internal TimeSpan ElapsedValue;
-        public TimeSpan Elapsed { get { return ElapsedValue; } }
+        public TimeSpan Elapsed
+        {
+            get
+            {
+                ElapsedObserved.TrySetResult(true);
+                return ElapsedValue;
+            }
+        }
         public Task WaitForThresholdAsync(TimeSpan threshold)
         {
             AssertEx.Equal(TimeSpan.FromSeconds(3), threshold);
