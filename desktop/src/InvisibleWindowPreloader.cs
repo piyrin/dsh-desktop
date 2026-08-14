@@ -1,4 +1,5 @@
 using System.Threading.Tasks;
+using System;
 
 internal interface IInvisiblePreloadWindow
 {
@@ -19,19 +20,46 @@ internal static class InvisibleWindowPreloader
         bool originalShowInTaskbar = window.ShowInTaskbar;
         bool originalShowActivated = window.ShowActivated;
         double originalOpacity = window.Opacity;
+        Exception primaryFailure = null;
         try
         {
             window.ShowInTaskbar = false;
             window.ShowActivated = false;
             window.Opacity = 0.0;
             await window.ShowAndWaitUntilLoadedAsync();
-            window.Hide();
         }
-        finally
+        catch (Exception exception)
         {
-            window.Opacity = originalOpacity;
-            window.ShowActivated = originalShowActivated;
-            window.ShowInTaskbar = originalShowInTaskbar;
+            primaryFailure = exception;
+        }
+
+        Exception cleanupFailure = TryCleanup(null, window.Hide);
+        cleanupFailure = TryCleanup(cleanupFailure, delegate { window.Opacity = originalOpacity; });
+        cleanupFailure = TryCleanup(cleanupFailure, delegate { window.ShowActivated = originalShowActivated; });
+        cleanupFailure = TryCleanup(cleanupFailure, delegate { window.ShowInTaskbar = originalShowInTaskbar; });
+
+        if (primaryFailure != null)
+        {
+            if (cleanupFailure != null)
+            {
+                try { primaryFailure.Data["InvisiblePreloadCleanupFailure"] = cleanupFailure; }
+                catch (Exception) { }
+            }
+            throw primaryFailure;
+        }
+        if (cleanupFailure != null) throw cleanupFailure;
+    }
+
+    private static Exception TryCleanup(Exception current, Action cleanup)
+    {
+        try
+        {
+            cleanup();
+            return current;
+        }
+        catch (Exception exception)
+        {
+            return current == null ? exception : new AggregateException(current, exception);
         }
     }
 }

@@ -41,6 +41,7 @@ $sources = @(
   ,(Join-Path $root 'src\SingleInstanceCoordinator.cs')
   ,(Join-Path $root 'src\TrayController.cs')
   ,(Join-Path $root 'src\DesktopApplication.cs')
+  ,(Join-Path $root 'src\RecoveringDesktopBackend.cs')
 )
 & $compiler /nologo /target:exe `
   "/reference:$(Join-Path $frameworkRoot 'System.Net.Http.dll')" `

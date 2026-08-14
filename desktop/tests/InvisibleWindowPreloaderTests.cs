@@ -29,6 +29,23 @@ internal static class InvisibleWindowPreloaderTests
             AssertEx.Equal(0, window.ShowCalls);
             AssertEx.Equal(0, window.HideCalls);
         });
+
+        runner.Add("WebView preload fault hides and restores without replacing the original failure", delegate {
+            InvalidOperationException original = new InvalidOperationException("preload failed after show");
+            CleanupFaultingPreloadWindow window = new CleanupFaultingPreloadWindow(original);
+            Exception observed = null;
+
+            try { InvisibleWindowPreloader.PrepareAsync(window).GetAwaiter().GetResult(); }
+            catch (Exception exception) { observed = exception; }
+
+            AssertEx.True(Object.ReferenceEquals(original, observed));
+            AssertEx.Equal(1, window.HideCalls);
+            AssertEx.False(window.IsVisible);
+            AssertEx.Equal("hide,opacity,activate,taskbar", String.Join(",", window.CleanupSequence.ToArray()));
+            AssertEx.Equal(1.0, window.Opacity);
+            AssertEx.True(window.ShowActivated);
+            AssertEx.True(window.ShowInTaskbar);
+        });
     }
 
     private sealed class FakePreloadWindow : IInvisiblePreloadWindow
@@ -65,6 +82,83 @@ internal static class InvisibleWindowPreloaderTests
         public void Hide()
         {
             HideCalls++;
+        }
+    }
+
+    private sealed class CleanupFaultingPreloadWindow : IInvisiblePreloadWindow
+    {
+        private readonly Exception preloadFailure;
+        private bool showInTaskbar = true;
+        private bool showActivated = true;
+        private double opacity = 1.0;
+        private bool cleanupFaultsArmed;
+
+        internal readonly System.Collections.Generic.List<string> CleanupSequence =
+            new System.Collections.Generic.List<string>();
+        internal int HideCalls;
+        internal bool IsVisible;
+
+        internal CleanupFaultingPreloadWindow(Exception preloadFailure)
+        {
+            this.preloadFailure = preloadFailure;
+        }
+
+        public bool IsLoaded { get { return false; } }
+        public bool ShowInTaskbar
+        {
+            get { return showInTaskbar; }
+            set
+            {
+                showInTaskbar = value;
+                if (cleanupFaultsArmed && value)
+                {
+                    CleanupSequence.Add("taskbar");
+                    throw new InvalidOperationException("taskbar restore failed");
+                }
+            }
+        }
+        public bool ShowActivated
+        {
+            get { return showActivated; }
+            set
+            {
+                showActivated = value;
+                if (cleanupFaultsArmed && value)
+                {
+                    CleanupSequence.Add("activate");
+                    throw new InvalidOperationException("activation restore failed");
+                }
+            }
+        }
+        public double Opacity
+        {
+            get { return opacity; }
+            set
+            {
+                opacity = value;
+                if (cleanupFaultsArmed && value == 1.0)
+                {
+                    CleanupSequence.Add("opacity");
+                    throw new InvalidOperationException("opacity restore failed");
+                }
+            }
+        }
+
+        public Task ShowAndWaitUntilLoadedAsync()
+        {
+            IsVisible = true;
+            cleanupFaultsArmed = true;
+            TaskCompletionSource<bool> failed = new TaskCompletionSource<bool>();
+            failed.SetException(preloadFailure);
+            return failed.Task;
+        }
+
+        public void Hide()
+        {
+            HideCalls++;
+            IsVisible = false;
+            CleanupSequence.Add("hide");
+            throw new InvalidOperationException("hide failed");
         }
     }
 }

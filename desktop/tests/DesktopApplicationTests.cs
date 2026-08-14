@@ -146,6 +146,71 @@ internal static class DesktopApplicationTests
             AssertEx.Equal(0, harness.Window.WebCalls);
         });
 
+        runner.Add("missing installation retry rediscovers and navigates after repair", delegate {
+            RecoveringBackendFactory factory = new RecoveringBackendFactory();
+            List<string> logs = new List<string>();
+            RecoveringDesktopBackend backend = new RecoveringDesktopBackend(
+                factory,
+                delegate(string message) { logs.Add(message); });
+            DesktopHarness harness = new DesktopHarness(backend);
+            harness.Window.InitializeCompletion.SetResult(true);
+
+            AssertEx.True(harness.Application.RunColdStartAsync().Wait(1000));
+            AssertEx.Equal(1, factory.CreateCalls);
+            AssertEx.True(harness.Window.ErrorDetail.IndexOf("lib\\bin.js", StringComparison.OrdinalIgnoreCase) >= 0);
+            AssertEx.True(harness.Window.RetryAction != null);
+            AssertEx.Equal(0, harness.Window.NavigateCalls);
+
+            RecoveringReadyBackend repaired = new RecoveringReadyBackend();
+            factory.AvailableBackend = repaired;
+            harness.Window.RetryAction();
+
+            AssertEx.True(WaitUntil(delegate { return harness.Window.WebCalls == 1; }));
+            AssertEx.Equal(2, factory.CreateCalls);
+            AssertEx.Equal(1, repaired.EnsureCalls);
+            AssertEx.Equal(1, harness.Window.NavigateCalls);
+            AssertEx.Equal(BackendOwnership.Owned, backend.Ownership);
+            AssertEx.True(logs.Exists(delegate(string message) {
+                return message.IndexOf("rediscovery succeeded", StringComparison.OrdinalIgnoreCase) >= 0;
+            }));
+        });
+
+        runner.Add("repeated missing installation attempts are rediscovered instead of cached", delegate {
+            RecoveringBackendFactory factory = new RecoveringBackendFactory();
+            RecoveringDesktopBackend backend = new RecoveringDesktopBackend(factory, delegate(string message) { });
+
+            ReadinessResult first = backend.EnsureReadyAsync(CancellationToken.None).GetAwaiter().GetResult();
+            ReadinessResult second = backend.EnsureReadyAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+            AssertEx.Equal(ReadinessState.NotReady, first.State);
+            AssertEx.Equal(ReadinessState.NotReady, second.State);
+            AssertEx.Equal(2, factory.CreateCalls);
+        });
+
+        runner.Add("concurrent recovery creates one backend and exit waits to stop it", delegate {
+            RecoveringReadyBackend created = new RecoveringReadyBackend();
+            BlockingRecoveringBackendFactory factory = new BlockingRecoveringBackendFactory(created);
+            RecoveringDesktopBackend backend = new RecoveringDesktopBackend(factory, delegate(string message) { });
+            Task<ReadinessResult>[] readiness = new Task<ReadinessResult>[4];
+            for (int index = 0; index < readiness.Length; index++)
+            {
+                readiness[index] = Task.Run(delegate {
+                    return backend.EnsureReadyAsync(CancellationToken.None).GetAwaiter().GetResult();
+                });
+            }
+
+            AssertEx.True(factory.CreateEntered.WaitOne(1000));
+            Task stop = backend.StopOwnedAsync();
+            AssertEx.False(stop.IsCompleted);
+            factory.AllowCreate.Set();
+            AssertEx.True(Task.WaitAll(readiness, 2000));
+            AssertEx.True(stop.Wait(2000));
+
+            AssertEx.Equal(1, factory.CreateCalls);
+            AssertEx.Equal(4, created.EnsureCalls);
+            AssertEx.Equal(1, created.StopCalls);
+        });
+
         runner.Add("failed retryable operation starts a new task on the next call", delegate {
             int attempts = 0;
             RetryableAsyncOperation operation = new RetryableAsyncOperation();
@@ -457,8 +522,16 @@ internal static class DesktopApplicationTests
         internal Action ShutdownAction;
         internal DesktopApplication Application;
 
+        private readonly IDesktopBackend backendOverride;
+
         internal DesktopHarness()
+            : this(null)
         {
+        }
+
+        internal DesktopHarness(IDesktopBackend backendOverride)
+        {
+            this.backendOverride = backendOverride;
             ShutdownAction = delegate { ShutdownCalls++; };
             RecreateApplication();
         }
@@ -467,7 +540,7 @@ internal static class DesktopApplicationTests
         {
             Application = new DesktopApplication(
                 Window,
-                Backend,
+                backendOverride ?? Backend,
                 Tray,
                 Dispatcher,
                 delegate { return Timer; },
@@ -586,6 +659,65 @@ internal static class DesktopApplicationTests
             if (Sequence != null) Sequence.Add("backend.stop");
             if (BeforeStop != null) BeforeStop();
             return StopCompletion == null ? Task.FromResult(true) : StopCompletion.Task;
+        }
+    }
+
+    private sealed class RecoveringBackendFactory : IDesktopBackendFactory
+    {
+        internal int CreateCalls;
+        internal IDesktopBackend AvailableBackend;
+
+        public IDesktopBackend Create()
+        {
+            CreateCalls++;
+            if (AvailableBackend == null)
+                throw new System.IO.FileNotFoundException("DSH JavaScript entry not found: lib\\bin.js");
+            return AvailableBackend;
+        }
+    }
+
+    private sealed class BlockingRecoveringBackendFactory : IDesktopBackendFactory
+    {
+        private readonly IDesktopBackend backend;
+        internal readonly ManualResetEvent CreateEntered = new ManualResetEvent(false);
+        internal readonly ManualResetEvent AllowCreate = new ManualResetEvent(false);
+        internal int CreateCalls;
+
+        internal BlockingRecoveringBackendFactory(IDesktopBackend backend)
+        {
+            this.backend = backend;
+        }
+
+        public IDesktopBackend Create()
+        {
+            Interlocked.Increment(ref CreateCalls);
+            CreateEntered.Set();
+            AllowCreate.WaitOne();
+            return backend;
+        }
+    }
+
+    private sealed class RecoveringReadyBackend : IDesktopBackend
+    {
+        internal int EnsureCalls;
+        internal int RestartCalls;
+        internal int StopCalls;
+
+        public BackendOwnership Ownership { get { return BackendOwnership.Owned; } }
+        public Task<ReadinessResult> EnsureReadyAsync(CancellationToken token)
+        {
+            Interlocked.Increment(ref EnsureCalls);
+            return Task.FromResult(Ready());
+        }
+        public Task<ReadinessResult> RestartAsync(CancellationToken token)
+        {
+            Interlocked.Increment(ref RestartCalls);
+            return Task.FromResult(Ready());
+        }
+        public Task StopOwnedAsync()
+        {
+            Interlocked.Increment(ref StopCalls);
+            return Task.FromResult(true);
         }
     }
 

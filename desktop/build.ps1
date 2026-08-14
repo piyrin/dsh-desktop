@@ -90,6 +90,7 @@ $sources = @(
     (Join-Path $desktopRoot 'src\MainWindow.cs'),
     (Join-Path $desktopRoot 'src\TrayController.cs'),
     (Join-Path $desktopRoot 'src\DesktopApplication.cs'),
+    (Join-Path $desktopRoot 'src\RecoveringDesktopBackend.cs'),
     (Join-Path $desktopRoot 'src\Program.cs')
 )
 

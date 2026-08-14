@@ -117,20 +117,14 @@ internal static class Program
 
     private static IDesktopBackend CreateBackend(AppPaths paths)
     {
-        try
-        {
-            DshInstallation installation = DshInstallation.Discover(
-                Environment.GetEnvironmentVariable("PATH"));
-            BackendLaunchSpec launchSpec = BackendLaunchSpec.Create(installation, paths, 8080);
-            return new BackendSupervisorAdapter(new BackendSupervisor(launchSpec, paths));
-        }
-        catch (Exception exception)
-        {
-            string detail = "Required Node or DSH files could not be found. Verify that node.exe and dsh.cmd are on PATH, then Retry. "
-                + exception.Message;
-            TryLog(paths, detail);
-            return new UnavailableDesktopBackend(detail);
-        }
+        return new RecoveringDesktopBackend(
+            new DelegateDesktopBackendFactory(delegate {
+                DshInstallation installation = DshInstallation.Discover(
+                    Environment.GetEnvironmentVariable("PATH"));
+                BackendLaunchSpec launchSpec = BackendLaunchSpec.Create(installation, paths, 8080);
+                return new BackendSupervisorAdapter(new BackendSupervisor(launchSpec, paths));
+            }),
+            delegate(string message) { TryLog(paths, message); });
     }
 
     private static int RunPreview(AppPaths paths, UiPreviewState previewState)
@@ -238,33 +232,6 @@ internal static class Program
             return supervisor.RestartAsync(token);
         }
         public Task StopOwnedAsync() { return supervisor.StopOwnedAsync(); }
-    }
-
-    private sealed class UnavailableDesktopBackend : IDesktopBackend
-    {
-        private readonly ReadinessResult failure;
-
-        internal UnavailableDesktopBackend(string detail)
-        {
-            failure = new ReadinessResult(ReadinessState.NotReady, TimeSpan.Zero, detail);
-        }
-
-        public BackendOwnership Ownership { get { return BackendOwnership.None; } }
-        public Task<ReadinessResult> EnsureReadyAsync(CancellationToken token)
-        {
-            if (token.IsCancellationRequested)
-            {
-                TaskCompletionSource<ReadinessResult> cancelled = new TaskCompletionSource<ReadinessResult>();
-                cancelled.SetCanceled();
-                return cancelled.Task;
-            }
-            return Task.FromResult(failure);
-        }
-        public Task<ReadinessResult> RestartAsync(CancellationToken token)
-        {
-            return EnsureReadyAsync(token);
-        }
-        public Task StopOwnedAsync() { return Task.FromResult(true); }
     }
 
     private sealed class WpfDispatcherAdapter : IDesktopDispatcher
