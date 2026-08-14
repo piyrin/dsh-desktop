@@ -18,6 +18,7 @@ $sources = @(
   (Join-Path $root 'tests\DesktopUiPolicyTests.cs'),
   (Join-Path $root 'tests\AppAssetsTests.cs'),
   (Join-Path $root 'tests\SplashOverlayTests.cs'),
+  (Join-Path $root 'tests\InvisibleWindowPreloaderTests.cs'),
   (Join-Path $root 'tests\DshInstallationTests.cs'),
   (Join-Path $root 'tests\DshReadinessTests.cs'),
   (Join-Path $root 'tests\BackendOwnershipTests.cs'),
@@ -31,6 +32,7 @@ $sources = @(
   (Join-Path $root 'src\DesktopUiPolicy.cs'),
   (Join-Path $root 'src\AppAssets.cs'),
   (Join-Path $root 'src\SplashOverlay.cs'),
+  (Join-Path $root 'src\InvisibleWindowPreloader.cs'),
   (Join-Path $root 'src\CommandLocator.cs'),
   (Join-Path $root 'src\DshInstallation.cs'),
   (Join-Path $root 'src\BackendLaunchSpec.cs')
@@ -51,4 +53,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $arguments = @()
 if ($Filter) { $arguments += '--filter'; $arguments += $Filter }
 & $output $arguments
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+& (Join-Path $root 'tests\InstallDesktopShortcutTests.ps1')
 exit $LASTEXITCODE

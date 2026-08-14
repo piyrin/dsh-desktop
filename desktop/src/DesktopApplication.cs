@@ -256,6 +256,7 @@ internal sealed class DesktopApplication
         try
         {
             if (explicitExitRequested) return;
+            log("Startup operation began: " + reason + ".");
             presentationOperation = BeginPresentationOperation();
             CancellationToken token = lifetimeCancellation.Token;
             IStartupTimer timer = InvokeTimer();
@@ -291,10 +292,14 @@ internal sealed class DesktopApplication
             catch (Exception exception)
             {
                 Observe(initialization, "WebView2 initialization after backend failure");
+                log("Backend startup failed: " + exception);
                 ShowServiceError("DeepSeek Harness could not start", exception.Message);
                 return;
             }
 
+            log("Backend readiness completed: "
+                + (result == null ? "no result" : result.State.ToString())
+                + (result == null ? "." : " after " + result.Elapsed.TotalMilliseconds.ToString("F1") + " ms."));
             RefreshTrayAvailability();
             if (result == null || result.State != ReadinessState.Ready)
             {
@@ -305,7 +310,9 @@ internal sealed class DesktopApplication
 
             try
             {
+                log("Backend is ready; waiting for WebView2 initialization.");
                 await initialization;
+                log("WebView2 initialization completed; navigating to DSH.");
                 await window.NavigateToDsh(dshUri);
             }
             catch (OperationCanceledException)
@@ -315,6 +322,7 @@ internal sealed class DesktopApplication
             }
             catch (Exception exception)
             {
+                log("WebView2 startup failed: " + exception);
                 ShowWebViewError(exception.Message);
                 return;
             }

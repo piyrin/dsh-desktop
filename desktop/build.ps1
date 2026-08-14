@@ -86,6 +86,7 @@ $sources = @(
     (Join-Path $desktopRoot 'src\DesktopUiPolicy.cs'),
     (Join-Path $desktopRoot 'src\AppAssets.cs'),
     (Join-Path $desktopRoot 'src\SplashOverlay.cs'),
+    (Join-Path $desktopRoot 'src\InvisibleWindowPreloader.cs'),
     (Join-Path $desktopRoot 'src\MainWindow.cs'),
     (Join-Path $desktopRoot 'src\TrayController.cs'),
     (Join-Path $desktopRoot 'src\DesktopApplication.cs'),
@@ -134,4 +135,22 @@ Copy-Item -LiteralPath (Join-Path $desktopRoot 'runtime\dsh-desktop-bootstrap.mj
 Copy-Item -LiteralPath (Join-Path $desktopRoot 'assets\favicon.svg') -Destination $publishRoot
 Copy-Item -LiteralPath $icon -Destination $publishRoot
 
+$requiredPublishedFiles = @(
+    'DeepSeek Harness.exe',
+    'Microsoft.Web.WebView2.Core.dll',
+    'Microsoft.Web.WebView2.Wpf.dll',
+    'WebView2Loader.dll',
+    'dsh-desktop-bootstrap.mjs',
+    'Microsoft.Web.WebView2.LICENSE.txt',
+    'favicon.svg',
+    'dsh-whale.ico'
+)
+foreach ($fileName in $requiredPublishedFiles) {
+    $publishedPath = Join-Path $publishRoot $fileName
+    if (-not (Test-Path -LiteralPath $publishedPath -PathType Leaf)) {
+        throw "Published runtime file is missing: $publishedPath"
+    }
+}
+
 Write-Host "Published: $executable"
+Write-Host "Verified $($requiredPublishedFiles.Count) required publish files."

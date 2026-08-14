@@ -260,13 +260,74 @@ internal sealed class MainWindow : Window
     private async Task InitializeWebViewCoreAsync()
     {
         Directory.CreateDirectory(paths.WebView2Data);
+        AppLogger.WriteDesktop(paths, "Creating the WebView2 environment.");
         CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(null, paths.WebView2Data);
+        AppLogger.WriteDesktop(paths, "WebView2 environment created; loading the invisible preload host.");
+        await InvisibleWindowPreloader.PrepareAsync(new MainWindowPreloadHost(this));
+        AppLogger.WriteDesktop(paths, "Invisible preload host loaded; ensuring the WebView2 control.");
         await webView.EnsureCoreWebView2Async(environment);
+        AppLogger.WriteDesktop(paths, "WebView2 control initialized.");
         webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
         webView.CoreWebView2.NavigationStarting -= OnNavigationStarting;
         webView.CoreWebView2.NewWindowRequested -= OnNewWindowRequested;
         webView.CoreWebView2.NavigationStarting += OnNavigationStarting;
         webView.CoreWebView2.NewWindowRequested += OnNewWindowRequested;
+    }
+
+    private sealed class MainWindowPreloadHost : IInvisiblePreloadWindow
+    {
+        private readonly MainWindow window;
+
+        internal MainWindowPreloadHost(MainWindow window)
+        {
+            this.window = window;
+        }
+
+        public bool IsLoaded { get { return window.IsLoaded; } }
+        public bool ShowInTaskbar
+        {
+            get { return window.ShowInTaskbar; }
+            set { window.ShowInTaskbar = value; }
+        }
+        public bool ShowActivated
+        {
+            get { return window.ShowActivated; }
+            set { window.ShowActivated = value; }
+        }
+        public double Opacity
+        {
+            get { return window.Opacity; }
+            set { window.Opacity = value; }
+        }
+
+        public Task ShowAndWaitUntilLoadedAsync()
+        {
+            if (window.IsLoaded)
+            {
+                window.Show();
+                return Task.FromResult(true);
+            }
+
+            TaskCompletionSource<bool> completion = new TaskCompletionSource<bool>();
+            RoutedEventHandler loaded = null;
+            loaded = delegate {
+                window.Loaded -= loaded;
+                completion.TrySetResult(true);
+            };
+            window.Loaded += loaded;
+            try { window.Show(); }
+            catch (Exception exception)
+            {
+                window.Loaded -= loaded;
+                completion.TrySetException(exception);
+            }
+            return completion.Task;
+        }
+
+        public void Hide()
+        {
+            window.Hide();
+        }
     }
 
     private void OnNavigationStarting(object sender, CoreWebView2NavigationStartingEventArgs eventArgs)

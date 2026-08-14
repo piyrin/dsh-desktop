@@ -53,6 +53,7 @@ internal sealed class TestRunner
         DesktopUiPolicyTests.Register(runner);
         AppAssetsTests.Register(runner);
         SplashOverlayTests.Register(runner);
+        InvisibleWindowPreloaderTests.Register(runner);
         DshInstallationTests.Register(runner);
         DshReadinessTests.Register(runner);
         BackendOwnershipTests.Register(runner);

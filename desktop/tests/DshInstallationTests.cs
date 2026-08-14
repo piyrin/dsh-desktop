@@ -74,6 +74,28 @@ internal static class DshInstallationTests
                 Directory.Delete(root, true);
             }
         });
+        runner.Add("DshInstallation reports a missing JavaScript entry without touching the real install", delegate
+        {
+            string root = Path.Combine(Path.GetTempPath(), "dsh-task8-missing-" + Guid.NewGuid().ToString("N"));
+            string fakeBin = Path.Combine(root, "bin");
+            Directory.CreateDirectory(fakeBin);
+            File.WriteAllText(Path.Combine(fakeBin, "node.exe"), "fake node");
+            File.WriteAllText(Path.Combine(fakeBin, "dsh.cmd"), "fake wrapper");
+            try
+            {
+                bool missingEntryReported = false;
+                try { DshInstallation.Discover(fakeBin); }
+                catch (FileNotFoundException exception)
+                {
+                    missingEntryReported = exception.Message.IndexOf("lib\\bin.js", StringComparison.OrdinalIgnoreCase) >= 0;
+                }
+                AssertEx.True(missingEntryReported);
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        });
     }
 
     private static string MakeFakeInstallation()

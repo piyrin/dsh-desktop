@@ -100,12 +100,50 @@ internal static class DesktopApplicationTests
             AssertEx.True(harness.Window.RetryAction != null);
             AssertEx.True(harness.Window.ViewLogsAction != null);
             AssertEx.True(harness.Window.ExitAction != null);
+            AssertEx.True(harness.Window.LogMessages.Exists(delegate(string message) {
+                return message.IndexOf("System.InvalidOperationException", StringComparison.Ordinal) >= 0
+                    && message.IndexOf("runtime unavailable", StringComparison.Ordinal) >= 0;
+            }));
 
             harness.Window.InitializeCompletion = Completed();
             harness.Backend.EnsureCompletion = Completed(Ready());
             harness.Window.RetryAction();
             AssertEx.True(WaitUntil(delegate { return harness.Window.WebCalls == 1; }));
             AssertEx.Equal(2, harness.Window.InitializeCalls);
+        });
+
+        runner.Add("port conflict is actionable and never navigates to the unknown service", delegate {
+            DesktopHarness harness = new DesktopHarness();
+            harness.Window.InitializeCompletion.SetResult(true);
+            harness.Backend.EnsureCompletion.SetResult(new ReadinessResult(
+                ReadinessState.PortConflict,
+                TimeSpan.FromMilliseconds(12),
+                "The DSH port is occupied by another application."));
+
+            AssertEx.True(harness.Application.RunColdStartAsync().Wait(1000));
+            AssertEx.True(harness.Window.ErrorTitle.IndexOf("Port 8080", StringComparison.OrdinalIgnoreCase) >= 0);
+            AssertEx.True(harness.Window.RetryAction != null);
+            AssertEx.True(harness.Window.ViewLogsAction != null);
+            AssertEx.True(harness.Window.ExitAction != null);
+            AssertEx.Equal(0, harness.Window.NavigateCalls);
+            AssertEx.Equal(0, harness.Window.WebCalls);
+        });
+
+        runner.Add("missing DSH dependency is actionable without navigating", delegate {
+            DesktopHarness harness = new DesktopHarness();
+            harness.Window.InitializeCompletion.SetResult(true);
+            harness.Backend.EnsureCompletion.SetResult(new ReadinessResult(
+                ReadinessState.NotReady,
+                TimeSpan.Zero,
+                "Required Node or DSH files could not be found. DSH JavaScript entry not found: lib\\bin.js"));
+
+            AssertEx.True(harness.Application.RunColdStartAsync().Wait(1000));
+            AssertEx.True(harness.Window.ErrorDetail.IndexOf("lib\\bin.js", StringComparison.OrdinalIgnoreCase) >= 0);
+            AssertEx.True(harness.Window.RetryAction != null);
+            AssertEx.True(harness.Window.ViewLogsAction != null);
+            AssertEx.True(harness.Window.ExitAction != null);
+            AssertEx.Equal(0, harness.Window.NavigateCalls);
+            AssertEx.Equal(0, harness.Window.WebCalls);
         });
 
         runner.Add("failed retryable operation starts a new task on the next call", delegate {
@@ -299,6 +337,7 @@ internal static class DesktopApplicationTests
             harness.Window.InitializeCompletion.SetResult(true);
             harness.Backend.EnsureCompletion.SetResult(Ready());
             AssertEx.True(WaitUntil(delegate { return harness.Window.WebCalls == 1; }));
+            AssertEx.Equal(0, harness.Window.SplashCalls);
         });
 
         runner.Add("ready completion after close never transiently shows the window", delegate {
