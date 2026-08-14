@@ -11,7 +11,7 @@ See the [project overview](../README.md) for repository-wide setup and the optio
 - Microsoft Edge WebView2 Runtime (Evergreen).
 - Network access during the first build so the pinned WebView2 SDK package can be restored.
 
-Run all commands below from `E:\dsh` in Windows PowerShell.
+Run all commands below from the repository root in Windows PowerShell.
 
 ## Test and build
 
@@ -27,7 +27,7 @@ Build the x64 Windows GUI executable and publish its runtime files:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\desktop\build.ps1
 ```
 
-The executable is `E:\dsh\desktop\publish\DeepSeek Harness.exe`.
+The executable is `desktop\publish\DeepSeek Harness.exe` relative to the repository root.
 
 ## Install and launch the desktop shortcut
 
@@ -37,7 +37,7 @@ Build first, then create or update `DeepSeek Harness.lnk` in the Windows Desktop
 powershell -NoProfile -ExecutionPolicy Bypass -File .\desktop\install-desktop-shortcut.ps1
 ```
 
-The installer resolves the real Desktop directory through Windows, uses `E:\dsh\assets\branding\dsh-whale.ico`, updates only `DeepSeek Harness.lnk`, and leaves unrelated shortcuts unchanged. Double-click the resulting shortcut to launch without a terminal. For a direct launch:
+The installer resolves the real Desktop directory through Windows, uses the repository's `assets\branding\dsh-whale.ico`, and dynamically writes absolute target, working-directory, and icon metadata into the shortcut. It updates only `DeepSeek Harness.lnk` and leaves unrelated shortcuts unchanged. Double-click the resulting shortcut to launch without a terminal. For a direct launch:
 
 ```powershell
 & '.\desktop\publish\DeepSeek Harness.exe'

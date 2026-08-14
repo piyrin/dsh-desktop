@@ -59,5 +59,20 @@ if ($LASTEXITCODE -eq 0) {
     throw 'samples/vision/.gitkeep must remain trackable.'
 }
 
-Write-Host 'PASS repository layout uses organized paths and keeps local vision samples ignored'
+$publicDocuments = @(& git -C $repositoryRoot ls-files '*.md' | Where-Object {
+    $_ -notlike 'docs/superpowers/*' -and $_ -notlike '.superpowers/*'
+})
+if ($LASTEXITCODE -ne 0) {
+    throw 'Could not enumerate tracked public documentation.'
+}
+foreach ($relativePath in $publicDocuments) {
+    $documentPath = Join-Path $repositoryRoot $relativePath
+    $content = Get-Content -LiteralPath $documentPath -Raw
+    $machinePath = [regex]::Match($content, '(?<![A-Za-z0-9])[A-Za-z]:[\\/]')
+    if ($machinePath.Success) {
+        throw "Public documentation contains a checkout-specific drive path: $relativePath"
+    }
+}
+
+Write-Host 'PASS repository layout uses organized paths, keeps local samples ignored, and has portable public docs'
 $global:LASTEXITCODE = 0

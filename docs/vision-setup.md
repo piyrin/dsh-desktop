@@ -1,111 +1,119 @@
-# DeepSeek 主体 + 视觉外挂：安装与接入说明
+# 可选视觉集成指南
 
-目标架构：**主模型保持 DeepSeek（纯文本），识图时由 MCP 工具 `mcp__vision__describe_image` 把图片发给视觉端点，拿回纯文本描述。**
+DSH Desktop 本身不捆绑视觉模型、视觉服务或图片自动转换插件。本指南说明如何把仓库根目录的 [`dsh-vision-mcp.cjs`](../dsh-vision-mcp.cjs) 注册为可选 MCP stdio 服务，让纯文本主模型通过 `mcp__vision__describe_image` 获取图片的纯文本描述。
 
-- 脚本：[`dsh-vision-mcp.cjs`](../dsh-vision-mcp.cjs)（零依赖 MCP stdio 服务器，OpenAI 兼容协议）
-- 插件：`dsh-vision-inline`（消息管线插件：贴进对话框的图片自动转文字描述）
-- 接入：`%USERPROFILE%\.dsh\profiles\web\cordis.patch.yml` 的 `mcp-vision`、`vision-inline` 行
-- 用法：**直接往对话框粘贴/拖入一张或多张图片发送即可**；也可 `Win+Shift+S` 截图后说「看图」（剪贴板路线）
-- 本地测试样例（如有）统一放在 [`samples/vision/`](../samples/vision/)；图片默认被 Git 忽略，仅目录占位文件会发布。
+该脚本位于相对于仓库根目录的精确路径 `dsh-vision-mcp.cjs`。为兼容已有 DSH profile，请保留这个根目录位置。
 
-## 对话框贴图直发（vision-inline 插件，主用法）
+## 工作方式
 
-**必须在新会话中使用**（默认模型/闸门配置只在会话创建时生效）。
+- MCP 工具名为 `describe_image`；DSH 通常将其显示为 `mcp__vision__describe_image`。
+- 工具读取本地 PNG、JPEG、WebP 或 GIF 文件，单文件上限为 20 MiB。
+- 图片会发送到兼容 OpenAI `POST /chat/completions` 接口、且支持图片 data URL 的视觉端点。
+- 视觉端点返回的文本会作为 MCP 文本结果交给主模型；脚本不会让主模型直接接收图片。
+- 本仓库不包含 `dsh-vision-inline`。如果另行安装图片自动转换插件，请按该插件自己的文档配置并单独验证。
 
-- 往输入框粘贴或拖入一张**或多张**图片，可附带文字，直接发送；
-- 插件在消息持久化前把每张图交给视觉端点（GLM-4.6V-Flash），替换为 `[用户发送的图片，由视觉助手识别]` 文字描述；
-- DeepSeek 全程只看到文字；日志里存的也是文字版（图片不进历史、不反复计费）；
-- `read_image` 工具结果里的图片块同样被自动转成描述；
-- 视觉失败（429 挤爆/网络）时降级为占位文字，消息照常送达，不会卡死会话；
-- 描述按 attachmentId 缓存，同一张图不会重复调用视觉端点。
+## 前置条件
 
-生效前提：`settings.yaml` 的 `llm-pi-ai.providers.deepseek` 路由存在（已配置），新会话默认模型走
-pi-ai `deepseek` 路由（`agent-default-model.provider: deepseek`）。推理档位因 pi-ai 目录限制由
-`max` 调整为 `high`。
+- 已安装并可运行 DSH，以及 DSH 使用的现代 Node.js 运行时。
+- 一个可访问的视觉端点：可以是本地 Ollama，也可以是兼容上述接口的远程服务。
+- 端点中已安装或已启用与 `VISION_MODEL` 对应的视觉模型。
+- 可以编辑目标 DSH profile 的用户配置，例如 `%USERPROFILE%\.dsh\profiles\web\cordis.patch.yml`。
+- 使用远程端点时，拥有该服务要求的凭据，并了解其数据处理、配额和计费条款。
 
-## 当前模式：云端免费档（方案 C，默认生效）
+服务可用性、模型名称、配额和价格可能变化；请以所选提供方的当前文档为准。
 
-端点：智谱开放平台 `https://open.bigmodel.cn/api/paas/v4`，模型 `glm-4.6v-flash`（**完全免费**，128K 上下文，原生工具调用）。
-密钥不写进任何文件：通过用户环境变量 `VISION_API_KEY` 传入。
+## 环境变量
 
-```powershell
-# 注册 https://open.bigmodel.cn 拿到 key 后，PowerShell 执行一次：
-[Environment]::SetEnvironmentVariable('VISION_API_KEY','你的key','User')
-# 然后【新开终端】重启 dsh web 生效
-```
+| 变量 | 默认值 | 用途 |
+|---|---|---|
+| `VISION_BASE_URL` | `http://127.0.0.1:11434/v1` | OpenAI 兼容 API 基地址 |
+| `VISION_MODEL` | `qwen2.5-vl:3b` | 视觉模型 ID |
+| `VISION_API_KEY` | 未设置 | 可选 Bearer 凭据；本地 Ollama 通常不需要 |
+| `VISION_MAX_TOKENS` | `1024` | 最大文本输出 token 数 |
+| `VISION_TIMEOUT_MS` | `180000` | 单次请求超时毫秒数 |
 
-智谱的 key 形如 `xxxxx.yyyyyy`（含一个点），整串填入即可。
-免费档有调用频率限制（RPM/TPM），个人识图用量完全够。
+## 选择视觉端点
 
-换模型：智谱平台还有 `glm-4.6v-flashx`（轻量高速，付费）与 `glm-4.6v`（高性能，付费）；
-想换回硅基流动免费档（`Qwen/Qwen2.5-VL-7B-Instruct`）则把 `VISION_BASE_URL` 改成
-`https://api.siliconflow.cn/v1`。改 `cordis.patch.yml` 对应字段后重启 dsh web。
+### 本地 Ollama 示例
 
-## 本地模式（方案 B，已暂缓，随时可切回）
-
-### 本机配置（已勘察）
-
-- GPU：NVIDIA RTX 5060 Laptop，8GB 显存（桌面已占用约 2GB）
-- CPU：AMD Ryzen 9 8940HX；内存约 32GB
-- 结论：跑 3–4B 档视觉模型最稳；7–8B 档显存偏紧。
-
-### 第 1 步：安装 Ollama 到 D 盘（免管理员，便携版）
-
-1. 下载：https://ollama.com/download/ollama-windows-amd64.zip（慢就用迅雷/IDM 多线程，
-   或 GitHub 代理 `https://mirror.ghproxy.com/https://github.com/ollama/ollama/releases/download/<版本号>/ollama-windows-amd64.zip`）
-2. 解压到 `D:\ollama`（应有 `D:\ollama\ollama.exe`）。
-
-### 第 2 步：设置环境变量（PowerShell 执行一次）
+安装 Ollama 并准备与脚本默认值匹配的模型后，启动服务：
 
 ```powershell
-[Environment]::SetEnvironmentVariable('OLLAMA_MODELS','D:\ollama\models','User')
-[Environment]::SetEnvironmentVariable('OLLAMA_NUM_PARALLEL','1','User')
-[Environment]::SetEnvironmentVariable('OLLAMA_MAX_LOADED_MODELS','1','User')
-$p = [Environment]::GetEnvironmentVariable('Path','User')
-if ($p -notlike '*D:\ollama*') { [Environment]::SetEnvironmentVariable('Path', ($p.TrimEnd(';') + ';D:\ollama'), 'User') }
+ollama pull qwen2.5-vl:3b
+ollama serve
 ```
 
-### 第 3 步：启动并拉取模型
+使用默认本地端点时，可以省略 `VISION_BASE_URL`、`VISION_MODEL` 和 `VISION_API_KEY`。如果使用其他本地模型，请显式设置对应的模型 ID。
+
+### 远程兼容端点示例
+
+不要把真实凭据写进仓库或提交到 profile 文件。可以先把凭据保存到操作系统的用户环境中：
 
 ```powershell
-D:\ollama\ollama.exe serve          # 1 号终端，挂着别关
-# 另开 2 号终端：
-D:\ollama\ollama.exe pull qwen2.5-vl:3b
-D:\ollama\ollama.exe run qwen2.5-vl:3b "你好"
+$visionApiKey = Read-Host 'Vision API key'
+[Environment]::SetEnvironmentVariable('VISION_API_KEY', $visionApiKey, 'User')
+Remove-Variable visionApiKey
 ```
 
-模型下载慢的国内路线：魔搭（ModelScope）搜 `Qwen/Qwen2.5-VL-3B-Instruct-GGUF` 下
-`qwen2.5-vl-3b-instruct-q4_k_m.gguf`，然后：
-```
-# Modelfile 内容：FROM D:\ollama\models\qwen2.5-vl-3b-instruct-q4_k_m.gguf
-D:\ollama\ollama.exe create qwen2.5-vl:3b -f Modelfile
-```
+环境变量变更后，请启动新的 DSH 进程，使其读取新值。
 
-### 切回本地
+## 注册 MCP 服务
 
-把 `cordis.patch.yml` 里 `mcp-vision` 的 `env` 改回：
+在目标 profile 的 `cordis.patch.yml` 中添加一个 MCP 客户端条目。下面是远程端点示例；请将占位符替换为自己的值：
 
 ```yaml
-VISION_BASE_URL: 'http://127.0.0.1:11434/v1'
-VISION_MODEL: 'qwen2.5-vl:3b'
-# 删掉 VISION_API_KEY 行
+- insert:
+    - id: mcp-vision
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: vision
+        transport: stdio
+        command: !!js process.execPath
+        args: ['<repo-root>/dsh-vision-mcp.cjs']
+        env:
+          VISION_BASE_URL: 'https://vision-provider.example/v1'
+          VISION_MODEL: '<provider-model-id>'
+          VISION_API_KEY: !!js process.env.VISION_API_KEY
+          VISION_MAX_TOKENS: '1024'
+          VISION_TIMEOUT_MS: '180000'
+        toolCallTimeoutMs: 180000
 ```
 
-重启 dsh web。
+`<repo-root>` 是占位符，不应原样保留。请在用户自己的、未提交的 profile 配置中替换为本地仓库根目录，并确保最终参数指向根目录的 `dsh-vision-mcp.cjs`。本地 Ollama 配置可以保留同一条目并删除 `env`，让脚本采用默认值。
 
-## 模型选型参考（本地）
+修改 profile 后，重启 DSH 并创建新会话，以确保配置和工具目录重新加载。
 
-| 模型 | 显存(Q4) | 说明 |
-|---|---|---|
-| `qwen2.5-vl:3b`（默认） | 约 2GB | 舒服，中文截图/UI 够用 |
-| `qwen2.5-vl:7b` | 约 5.6GB | 质量更好，但 8GB 显卡上偏紧 |
-| `gemma3:4b` | 约 3.3GB | 备选 |
+## 安全注意事项
+
+- 远程视觉服务会接收图片内容。发送截图、文档或照片前，确认其中不含不应离开设备的数据。
+- 不要把 API key、访问令牌或真实 profile 凭据写入仓库、样例图片、命令历史或故障报告。
+- `VISION_API_KEY` 仅应从进程环境读取；YAML 示例使用 `process.env.VISION_API_KEY`，不包含实际值。
+- 本地测试图片放在 [`samples/vision/`](../samples/vision/)；该目录中的图片默认被 Git 忽略，仅 `.gitkeep` 被跟踪。
+- 分享日志前先检查端点 URL、文件路径和其他环境信息是否适合公开。
+
+## 验证步骤
+
+1. 启动本地视觉服务，或确认远程兼容端点可访问。
+2. 重启 DSH，并查看 stderr 或 DSH 日志中是否出现 `[dsh-vision] up: endpoint=... model=...`。
+3. 把一张非敏感测试图保存为 `samples/vision/local-check.png`，并确认它不会被 Git 跟踪：
+
+   ```powershell
+   git check-ignore --no-index samples/vision/local-check.png
+   ```
+
+4. 在新会话中调用 `mcp__vision__describe_image`，传入该文件路径和一个具体问题。
+5. 确认工具返回纯文本描述；再检查 `git status --short`，确保测试图片和凭据没有进入待提交内容。
 
 ## 故障排查
 
-- 工具报「endpoint not reachable」→ 本地模式时 Ollama 没在跑（`ollama serve`）。
-- 工具报「HTTP 429 访问量过大」→ 免费档高峰拥堵，脚本已内置自动退避重试（3 次：3s/8s/15s）；仍失败就是真挤爆，等几分钟再试。
-- 工具报「HTTP 401」→ `VISION_API_KEY` 环境变量没设，或设了之后没有重启 dsh web。
-- 工具报「HTTP 404」→ `VISION_MODEL` 名字不对（当前应为 `glm-4.6v-flash`）。
-- 回复慢 → 云端模式一般 2–10 秒；本地模式首次要加载模型进显存。
-- 服务器日志 → dsh web 终端里 `[dsh-vision] ...` 开头的行。
+- `endpoint ... is not reachable`：确认本地服务已启动，或检查 `VISION_BASE_URL`、DNS、防火墙和代理设置。
+- HTTP 401/403：确认 DSH 进程可以读取 `VISION_API_KEY`，且凭据适用于当前端点。
+- HTTP 404：确认 API 基地址包含正确的版本路径，并核对 `VISION_MODEL`。
+- HTTP 429：脚本会按 3、8、15 秒进行最多三次退避重试；持续失败时请等待或检查提供方配额。
+- 请求超时：检查模型是否已加载、图片大小和网络状态；需要时调整 `VISION_TIMEOUT_MS`。
+- `unsupported image type`：仅使用 PNG、JPEG、WebP 或 GIF。
+- `returned no text`：确认所选模型支持视觉输入和非流式文本响应。
+
+## 上游与归属
+
+该视觉集成是可选的独立兼容层，不是 DeepSeek、DSH 上游项目、Ollama 或任何视觉服务提供方的官方组件，也不表示获得其认可。
