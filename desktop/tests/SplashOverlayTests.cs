@@ -37,13 +37,56 @@ internal static class SplashOverlayTests
                     WindowStyle = WindowStyle.None
                 };
 
-                host.Show();
-                splash.StartAnimated();
-                PumpDispatcher(TimeSpan.FromMilliseconds(1400));
+                try
+                {
+                    host.Show();
+                    splash.StartAnimated();
+                    PumpDispatcher(TimeSpan.FromMilliseconds(1400));
 
-                AssertEx.Equal(420.0, revealViewport.Width);
-                AssertEx.Equal<Brush>(null, revealViewport.OpacityMask);
-                host.Close();
+                    AssertEx.Equal(420.0, revealViewport.Width);
+                    AssertEx.Equal<Brush>(null, revealViewport.OpacityMask);
+                }
+                finally
+                {
+                    host.Close();
+                }
+            });
+        });
+
+        runner.Add("window chrome transitions preserve window bounds", delegate {
+            RunSta(delegate {
+                Window host = new Window
+                {
+                    Left = 180,
+                    Top = 120,
+                    Width = 760,
+                    Height = 520,
+                    ShowInTaskbar = false
+                };
+                try
+                {
+                    host.Show();
+
+                    DesktopWindowChrome.Apply(host, DesktopWindowChromeMode.Borderless);
+                    AssertEx.Equal(WindowStyle.None, host.WindowStyle);
+                    AssertEx.Equal(ResizeMode.NoResize, host.ResizeMode);
+                    AssertEx.Equal(180.0, host.Left);
+                    AssertEx.Equal(120.0, host.Top);
+                    AssertEx.Equal(760.0, host.Width);
+                    AssertEx.Equal(520.0, host.Height);
+
+                    DesktopWindowChrome.Apply(host, DesktopWindowChromeMode.Native);
+                    AssertEx.Equal(WindowStyle.SingleBorderWindow, host.WindowStyle);
+                    AssertEx.Equal(ResizeMode.CanResize, host.ResizeMode);
+                    AssertEx.Equal(180.0, host.Left);
+                    AssertEx.Equal(120.0, host.Top);
+                    AssertEx.Equal(760.0, host.Width);
+                    AssertEx.Equal(520.0, host.Height);
+                }
+                finally
+                {
+                    host.Close();
+                }
             });
         });
     }

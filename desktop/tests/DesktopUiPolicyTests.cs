@@ -53,6 +53,22 @@ internal static class DesktopUiPolicyTests
             AssertEx.False(state.IsSplashAnimationRunning);
         });
 
+        runner.Add("only animated splash requests borderless window chrome", delegate {
+            DesktopPresentationState state = new DesktopPresentationState();
+
+            AssertEx.Equal(DesktopWindowChromeMode.Native, state.WindowChrome);
+            state.ShowAnimatedSplash();
+            AssertEx.Equal(DesktopWindowChromeMode.Borderless, state.WindowChrome);
+            state.ShowWebContent();
+            AssertEx.Equal(DesktopWindowChromeMode.Native, state.WindowChrome);
+            state.ShowAnimatedSplash();
+            state.ShowError();
+            AssertEx.Equal(DesktopWindowChromeMode.Native, state.WindowChrome);
+            state.ShowAnimatedSplash();
+            state.RestoreWithoutAnimation();
+            AssertEx.Equal(DesktopWindowChromeMode.Native, state.WindowChrome);
+        });
+
         runner.Add("navigation allows the configured origin regardless of path", delegate {
             Uri configured = new Uri("http://127.0.0.1:8080/");
 

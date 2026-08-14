@@ -26,7 +26,7 @@ internal sealed class AppPaths
             DesktopLog = Path.Combine(logs, "desktop.log"),
             DshStdoutLog = Path.Combine(logs, "dsh-stdout.log"),
             DshStderrLog = Path.Combine(logs, "dsh-stderr.log"),
-            BootstrapScript = Path.Combine(applicationDirectory, "runtime", "dsh-desktop-bootstrap.mjs")
+            BootstrapScript = Path.Combine(applicationDirectory, "dsh-desktop-bootstrap.mjs")
         };
     }
 }

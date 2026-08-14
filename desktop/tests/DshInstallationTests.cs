@@ -49,6 +49,31 @@ internal static class DshInstallationTests
                 Directory.Delete(root, true);
             }
         });
+
+        runner.Add("launch spec uses packaged bootstrap beside executable", delegate
+        {
+            string root = MakeFakeInstallation();
+            try
+            {
+                string nodeDirectory = Path.Combine(root, "node");
+                string wrapperDirectory = Path.Combine(root, "bin");
+                string applicationDirectory = Path.Combine(root, "publish");
+                Directory.CreateDirectory(applicationDirectory);
+                string packagedBootstrap = Path.Combine(applicationDirectory, "dsh-desktop-bootstrap.mjs");
+                File.WriteAllText(packagedBootstrap, "// packaged bootstrap");
+
+                DshInstallation installation = DshInstallation.Discover(nodeDirectory + ";" + wrapperDirectory);
+                AppPaths paths = AppPaths.Create(Path.Combine(root, "local"), applicationDirectory);
+                BackendLaunchSpec spec = BackendLaunchSpec.Create(installation, paths, 8080);
+
+                AssertEx.True(File.Exists(paths.BootstrapScript));
+                AssertEx.Equal("\"" + packagedBootstrap + "\"", spec.Arguments);
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        });
     }
 
     private static string MakeFakeInstallation()

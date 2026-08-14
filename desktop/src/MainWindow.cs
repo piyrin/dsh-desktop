@@ -91,6 +91,7 @@ internal sealed class MainWindow : Window
     {
         VerifyAccess();
         presentationState.ShowAnimatedSplash();
+        DesktopWindowChrome.Apply(this, presentationState.WindowChrome);
         errorOverlay.Visibility = Visibility.Collapsed;
         webView.Visibility = Visibility.Hidden;
         splashOverlay.StartAnimated();
@@ -101,6 +102,7 @@ internal sealed class MainWindow : Window
     {
         VerifyAccess();
         presentationState.ShowWebContent();
+        DesktopWindowChrome.Apply(this, presentationState.WindowChrome);
         splashOverlay.StopAndHide();
         errorOverlay.Visibility = Visibility.Collapsed;
         webView.Visibility = Visibility.Visible;
@@ -120,6 +122,7 @@ internal sealed class MainWindow : Window
         if (exit == null) throw new ArgumentNullException("exit");
 
         presentationState.ShowError();
+        DesktopWindowChrome.Apply(this, presentationState.WindowChrome);
         splashOverlay.StopAndHide();
         webView.Visibility = Visibility.Hidden;
         errorOverlay.Children.Clear();
@@ -179,6 +182,7 @@ internal sealed class MainWindow : Window
     {
         VerifyAccess();
         presentationState.RestoreWithoutAnimation();
+        DesktopWindowChrome.Apply(this, presentationState.WindowChrome);
         splashOverlay.StopAndHide();
         if (presentationState.Surface == DesktopSurface.Error)
         {
@@ -201,6 +205,7 @@ internal sealed class MainWindow : Window
 
     protected override void OnClosed(EventArgs eventArgs)
     {
+        splashOverlay.StopAndHide();
         if (webView.CoreWebView2 != null)
         {
             webView.CoreWebView2.NavigationStarting -= OnNavigationStarting;

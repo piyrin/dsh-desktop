@@ -1,4 +1,5 @@
 using System;
+using System.Windows;
 
 internal enum DesktopSurface
 {
@@ -8,10 +9,25 @@ internal enum DesktopSurface
     Error
 }
 
+internal enum DesktopWindowChromeMode
+{
+    Native,
+    Borderless
+}
+
 internal sealed class DesktopPresentationState
 {
     internal DesktopSurface Surface { get; private set; }
     internal bool IsSplashAnimationRunning { get; private set; }
+    internal DesktopWindowChromeMode WindowChrome
+    {
+        get
+        {
+            return Surface == DesktopSurface.Splash
+                ? DesktopWindowChromeMode.Borderless
+                : DesktopWindowChromeMode.Native;
+        }
+    }
 
     internal void ShowAnimatedSplash()
     {
@@ -36,6 +52,37 @@ internal sealed class DesktopPresentationState
         if (Surface == DesktopSurface.Hidden || Surface == DesktopSurface.Splash)
             Surface = DesktopSurface.WebContent;
         IsSplashAnimationRunning = false;
+    }
+}
+
+internal static class DesktopWindowChrome
+{
+    internal static void Apply(Window window, DesktopWindowChromeMode mode)
+    {
+        if (window == null) throw new ArgumentNullException("window");
+
+        double left = window.Left;
+        double top = window.Top;
+        double width = window.Width;
+        double height = window.Height;
+        WindowState windowState = window.WindowState;
+
+        if (mode == DesktopWindowChromeMode.Borderless)
+        {
+            window.ResizeMode = ResizeMode.NoResize;
+            window.WindowStyle = WindowStyle.None;
+        }
+        else
+        {
+            window.WindowStyle = WindowStyle.SingleBorderWindow;
+            window.ResizeMode = ResizeMode.CanResize;
+        }
+
+        if (!Double.IsNaN(left)) window.Left = left;
+        if (!Double.IsNaN(top)) window.Top = top;
+        if (!Double.IsNaN(width)) window.Width = width;
+        if (!Double.IsNaN(height)) window.Height = height;
+        window.WindowState = windowState;
     }
 }
 
