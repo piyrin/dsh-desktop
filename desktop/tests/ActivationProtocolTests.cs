@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
+using System.Reflection;
 using System.Threading;
 
 internal static class ActivationProtocolTests
@@ -197,6 +198,23 @@ internal static class ActivationProtocolTests
                 AssertEx.True(secondary.SignalPrimary(TimeSpan.FromMilliseconds(1500)));
                 AssertEx.True(server.MessageReceived.WaitOne(1000));
                 AssertEx.Equal("ACTIVATE\n", server.Message);
+                AssertEx.True(server.EndOfStreamObserved);
+            }
+        });
+        runner.Add("deadline expiry disposes an unconnected pipe client without throwing", delegate {
+            Type attemptType = typeof(SingleInstanceCoordinator).GetNestedType("SignalAttempt", BindingFlags.NonPublic);
+            object attempt = Activator.CreateInstance(attemptType, true);
+            MethodInfo setClient = attemptType.GetMethod("SetClient", BindingFlags.Instance | BindingFlags.NonPublic);
+            MethodInfo expire = attemptType.GetMethod("Expire", BindingFlags.Instance | BindingFlags.NonPublic);
+            using (NamedPipeClientStream client = new NamedPipeClientStream(".", "DeepSeekHarness.Desktop.Activation.v1", PipeDirection.Out))
+            {
+                AssertEx.True((bool)setClient.Invoke(attempt, new object[] { client }));
+                try { expire.Invoke(attempt, null); }
+                catch (TargetInvocationException exception) { throw exception.InnerException; }
+                bool disposed = false;
+                try { client.Connect(1); }
+                catch (ObjectDisposedException) { disposed = true; }
+                AssertEx.True(disposed);
             }
         });
     }
@@ -295,6 +313,7 @@ internal static class ActivationProtocolTests
 
         internal ManualResetEvent MessageReceived { get; private set; }
         internal string Message { get; private set; }
+        internal bool EndOfStreamObserved { get; private set; }
 
         internal void Start()
         {
@@ -316,10 +335,8 @@ internal static class ActivationProtocolTests
                 server.WaitForConnection();
                 int value;
                 while ((value = server.ReadByte()) >= 0)
-                {
                     message.Append((char)value);
-                    if (value == '\n') break;
-                }
+                EndOfStreamObserved = true;
                 Message = message.ToString();
                 MessageReceived.Set();
             }

@@ -315,6 +315,7 @@ internal sealed class SingleInstanceCoordinator : IDisposable
         }
         catch (IOException) { }
         catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
     }
 
     private static void WakeListener()
