@@ -1,79 +1,62 @@
 # DSH Desktop
 
-A lightweight native Windows desktop shell for DeepSeek Harness, with WebView2, silent backend startup, system-tray residency, and conditional cold-start animation.
+DSH Desktop 是一个轻量的 Windows 桌面封装器，用原生 WPF 窗口承载 DeepSeek Harness（DSH）已有的 WebUI。它不会修改 DSH 的前端，也不包含视觉模型、图片识别 MCP 或其他独立扩展。
 
-DSH Desktop is compatible with a separately installed DeepSeek Harness WebUI on 64-bit Windows. The recommended GitHub repository slug is `dsh-desktop`.
+推荐的 GitHub 仓库名是 `dsh-desktop`。
 
-## Features
+## 功能
 
-- Native .NET Framework 4.8 WPF window with an embedded Microsoft WebView2 view.
-- Direct Node.js backend launch with no Command Prompt or PowerShell window.
-- Single-instance activation: a second launch restores the existing window.
-- Close-to-tray behavior with Open, Restart Service, View Logs, and Exit commands.
-- Ownership-aware cleanup that does not stop an independently started DSH service.
-- Conditional startup presentation: no animation when readiness completes within 3 seconds; a restrained waiting animation after that threshold.
-- Actionable errors for missing dependencies, startup timeout, early exit, and non-DSH services on port 8080.
+- 使用 .NET Framework 4.8、WPF 和 Microsoft WebView2 提供原生桌面窗口。
+- 直接启动 Node.js 后端，不弹出命令提示符或 PowerShell 窗口。
+- 只允许一个桌面实例；再次启动会恢复已有窗口。
+- 关闭窗口后驻留系统托盘，可从托盘打开、重启服务、查看日志或完全退出。
+- 只停止由桌面程序自己启动的 DSH，不会误关用户独立启动的服务。
+- 启动在 3 秒内完成时直接显示 WebUI；超过 3 秒才显示从左到右浮现的等待动画。
+- 对缺少 Node.js、缺少 DSH、8080 端口冲突、启动超时和 WebView2 故障给出可操作的错误提示。
 
-## Startup target and measured result
+## 运行条件
 
-Normal cached cold start has a **5–6 second local acceptance target**, not a cross-machine performance guarantee. In the verified stopped-state run on 2026-08-14, the exact-title HTTP endpoint responded in **4793.3 ms** and the titled native window appeared in **4876.1 ms**. Those measurements verify endpoint and window readiness only; exact WebUI DOM interactivity was not separately instrumented.
+- 64 位 Windows。
+- 已安装 .NET Framework 4.8。
+- 已安装 Microsoft Edge WebView2 Runtime（Evergreen）。
+- `node.exe` 和 `dsh.cmd` 可从 `PATH` 找到，且 DSH 包完整安装在 `dsh.cmd` 对应位置。
+- 第一次构建时，如果本地尚无固定版本的 WebView2 SDK 包，需要联网下载依赖。
 
-## Prerequisites
+本仓库不会安装 DeepSeek Harness、Node.js、模型配置或 WebView2 Runtime。
 
-- 64-bit Windows with .NET Framework 4.8 build tools.
-- `node.exe` and `dsh.cmd` on `PATH`, with the DSH package installed beside `dsh.cmd`.
-- Microsoft Edge WebView2 Runtime (Evergreen).
-- Network access during the first build if the pinned WebView2 SDK package is not already cached.
+## 快速开始
 
-DeepSeek Harness, Node.js, model configuration, and the WebView2 Runtime are not installed by this repository.
-
-## Quick start
-
-Open Windows PowerShell in the repository root, then run:
+在仓库根目录打开 Windows PowerShell，依次运行：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\desktop\test.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\desktop\build.ps1
-& '.\desktop\publish\DeepSeek Harness.exe'
-```
-
-The build publishes the executable and required runtime files under `desktop\publish\`.
-
-## Test and build
-
-Run the full automated suite, including the desktop-shortcut COM test and repository-layout checks:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\desktop\test.ps1
-```
-
-Build and publish the x64 Windows GUI application:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\desktop\build.ps1
-```
-
-Build output: `desktop\publish\DeepSeek Harness.exe`.
-
-## Install the desktop shortcut
-
-Build first, then create or update only `DeepSeek Harness.lnk` in the Windows Desktop directory:
-
-```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\desktop\install-desktop-shortcut.ps1
 ```
 
-The shortcut targets the published executable, uses `assets\branding\dsh-whale.ico`, and launches without a terminal. The installer does not remove unrelated shortcuts.
+完成后，双击桌面的 `DeepSeek Harness` 快捷方式即可启动。发布目录中的可执行文件是：
 
-## Window and tray behavior
+```text
+desktop\publish\DeepSeek Harness.exe
+```
 
-Closing the main window hides it; the desktop process and DSH remain available in the notification area. Double-click the tray icon or choose **Open** to restore the existing window without replaying the startup animation. **Restart Service** is enabled only for a backend started by DSH Desktop. **View Logs** opens the log directory. **Exit** is designed to remove the tray icon and stop only the owned DSH process tree.
+## 启动速度
 
-Use **Exit**, not the window close button, before rebuilding or when you intend to stop the owned backend.
+正常缓存后的冷启动验收目标是本机约 5～6 秒，这不是对所有电脑的性能保证。等待时间不超过 3 秒时不会播放启动动画；更慢时才显示等待界面，后端和 WebView2 会继续并行初始化。
 
-## Logs and local state
+## 窗口与托盘
 
-Runtime state is stored beneath `%LOCALAPPDATA%\DeepSeekHarness`:
+- 点击窗口右上角关闭按钮只会隐藏窗口，程序和 DSH 仍在后台运行。
+- 双击托盘图标，或在托盘菜单选择“打开”，会立即恢复已有窗口且不播放动画。
+- “重启服务”只在当前 DSH 由桌面程序启动时可用。
+- “查看日志”会打开本地日志目录。
+- “退出”会移除托盘图标，并停止桌面程序拥有的 DSH 进程树。
+
+需要重新构建、彻底结束 DSH 或处理 8080 端口问题时，请从托盘选择“退出”，不要只关闭窗口。
+
+## 日志与本地数据
+
+运行数据位于 `%LOCALAPPDATA%\DeepSeekHarness`：
 
 - `%LOCALAPPDATA%\DeepSeekHarness\logs\desktop.log`
 - `%LOCALAPPDATA%\DeepSeekHarness\logs\dsh-stdout.log`
@@ -81,42 +64,42 @@ Runtime state is stored beneath `%LOCALAPPDATA%\DeepSeekHarness`:
 - `%LOCALAPPDATA%\DeepSeekHarness\cache\node-compile\`
 - `%LOCALAPPDATA%\DeepSeekHarness\webview2\`
 
-## Repository layout
+## 项目结构
 
 ```text
 dsh-desktop/
-|-- assets/branding/        # Source PNG and ICO branding
-|-- desktop/                # WPF source, tests, build, installer, and runtime
-|-- docs/
-|   |-- vision-setup.md     # Optional vision MCP integration
-|   `-- superpowers/        # Approved design and implementation plan
-|-- samples/vision/         # Ignored local test images; only .gitkeep is tracked
-|-- tools/make-icon.ps1     # Regenerates branding from the bundled SVG
-|-- dsh-vision-mcp.cjs      # Vision MCP path retained for existing profiles
-|-- start-dsh-web.cmd       # Legacy shortcut compatibility launcher
-`-- open-dsh-web.cmd        # Legacy shortcut compatibility launcher
+|-- assets/branding/                  # 应用图标源文件
+|-- desktop/
+|   |-- assets/                       # 清单与 WebUI 图标
+|   |-- runtime/                      # DSH 后端启动脚本
+|   |-- src/                          # WPF、WebView2、托盘与后端管理源码
+|   |-- tests/                        # 自动化与结构测试
+|   |-- build.ps1                     # 构建并生成发布目录
+|   |-- install-desktop-shortcut.ps1  # 创建或更新桌面快捷方式
+|   |-- test.ps1                      # 运行完整测试
+|   `-- README.md                     # 桌面端详细使用说明
+|-- tools/make-icon.ps1               # 重新生成应用图标
+|-- .gitignore
+`-- README.md
 ```
 
-Generated `desktop\packages\`, `desktop\publish\`, `desktop\obj\`, and `desktop\test-output\` content is ignored by Git.
+`desktop\packages\`、`desktop\publish\`、`desktop\obj\` 和 `desktop\test-output\` 都是本地生成目录，不进入 Git。
 
-## Vision integration
+## 故障排查
 
-Optional image-description integration is documented in the [vision setup guide](docs/vision-setup.md). The root `dsh-vision-mcp.cjs` path remains unchanged because existing DSH profiles may reference that exact location. Local vision samples belong in [`samples/vision/`](samples/vision/) and are not published by default.
+- 窗口一直黑色：先从托盘选择“退出”，再重新构建并启动最新版。本项目已在首次显示 WebUI 时主动同步 WebView2 布局，避免离屏预加载后的黑屏。
+- 8080 端口被其他程序占用：退出占用者后，在错误页选择“重试”。
+- WebView2 无法启动：安装或修复 Microsoft Edge WebView2 Runtime，再选择“重试”。
+- 找不到 Node.js 或 DSH：确认 `node.exe`、`dsh.cmd` 在 `PATH` 中，并检查 DSH 安装目录是否包含 `node_modules\@deepseek-ai\dsh\lib\bin.js`。
 
-## Screenshots
+更详细的启动、托盘和恢复说明见 [桌面端说明](desktop/README.md)。
 
-Repository owner: add only reviewed, public release screenshots to a dedicated documentation folder, then replace this instruction with captions and links. Do not publish private local captures, account details, absolute user paths, API keys, or the Task 6 review screenshots.
+## 已知限制
 
-## Known limitations and manual checks
+- 仅支持 64 位 Windows。
+- DSH 地址目前固定为 `http://127.0.0.1:8080/`。
+- 仓库只负责把现有 DSH WebUI 封装为桌面应用，不提供视觉识别或其他 MCP 扩展。
 
-- Windows x64 only; DSH Desktop does not install or configure its upstream dependencies.
-- Port `8080` is currently fixed, and an unrelated responder is treated as a conflict.
-- Exact WebUI DOM-interactive timing remains a manual measurement item.
-- A real notification-area menu selection, including an actual tray **Exit** click, remains a manual acceptance item.
-- End-to-end inspection at 100% and 125% display scaling remains manual.
-- The real user Desktop shortcut is not installed automatically by tests or builds.
-- Root web launchers are retained for compatibility with existing shortcuts and may be removed only after users migrate.
+## 上游与归属
 
-## Upstream and affiliation
-
-DeepSeek Harness remains a separate upstream dependency and is not bundled here. DSH Desktop is an independent compatibility shell and is not affiliated with, endorsed by, or an official project of DeepSeek.
+DeepSeek Harness 是独立的上游依赖，本仓库不捆绑其源码。DSH Desktop 是第三方兼容桌面壳，不代表 DeepSeek 或 DSH 上游官方项目，也不表示获得其认可。

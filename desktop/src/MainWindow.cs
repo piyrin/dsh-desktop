@@ -18,6 +18,7 @@ internal sealed class MainWindow : Window
     private readonly Grid errorOverlay;
     private readonly DesktopPresentationState presentationState;
     private readonly RetryableAsyncOperation initialization = new RetryableAsyncOperation();
+    private readonly IWebViewRenderHost webViewRenderHost;
     private Uri allowedOrigin;
 
     internal MainWindow(AppPaths paths)
@@ -49,6 +50,7 @@ internal sealed class MainWindow : Window
             DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 11, 15, 20)
         };
         AutomationProperties.SetName(webView, "DeepSeek Harness web content");
+        webViewRenderHost = new MainWindowWebViewRenderHost(this, webView);
         root.Children.Add(webView);
 
         Geometry whaleGeometry = AppAssets.LoadWhaleGeometry(AppDomain.CurrentDomain.BaseDirectory);
@@ -121,8 +123,7 @@ internal sealed class MainWindow : Window
         DesktopWindowChrome.Apply(this, presentationState.WindowChrome);
         splashOverlay.StopAndHide();
         errorOverlay.Visibility = Visibility.Collapsed;
-        webView.Visibility = Visibility.Visible;
-        if (revealWindow) ShowWindow();
+        WebViewRenderSynchronizer.Present(webViewRenderHost, revealWindow);
     }
 
     internal void ShowError(
@@ -213,6 +214,7 @@ internal sealed class MainWindow : Window
         VerifyAccess();
         presentationState.RestoreWithoutAnimation();
         DesktopWindowChrome.Apply(this, presentationState.WindowChrome);
+        bool presentsWebContent = false;
         if (presentationState.Surface == DesktopSurface.Error)
         {
             splashOverlay.StopAndHide();
@@ -229,11 +231,14 @@ internal sealed class MainWindow : Window
         {
             splashOverlay.StopAndHide();
             errorOverlay.Visibility = Visibility.Collapsed;
-            webView.Visibility = Visibility.Visible;
+            presentsWebContent = true;
         }
 
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
-        ShowWindow();
+        if (presentsWebContent)
+            WebViewRenderSynchronizer.Present(webViewRenderHost, true);
+        else
+            ShowWindow();
         ActivateAndFocus();
     }
 
@@ -327,6 +332,40 @@ internal sealed class MainWindow : Window
         public void Hide()
         {
             window.Hide();
+        }
+    }
+
+    private sealed class MainWindowWebViewRenderHost : IWebViewRenderHost
+    {
+        private readonly MainWindow window;
+        private readonly WebView2 webView;
+
+        internal MainWindowWebViewRenderHost(MainWindow window, WebView2 webView)
+        {
+            this.window = window;
+            this.webView = webView;
+        }
+
+        public bool IsInitialized { get { return webView.CoreWebView2 != null; } }
+
+        public void MakeWebViewVisible()
+        {
+            webView.Visibility = Visibility.Visible;
+        }
+
+        public void ShowWindow()
+        {
+            window.ShowWindow();
+        }
+
+        public void UpdateLayout()
+        {
+            webView.UpdateLayout();
+        }
+
+        public void UpdateWindowPosition()
+        {
+            webView.UpdateWindowPos();
         }
     }
 

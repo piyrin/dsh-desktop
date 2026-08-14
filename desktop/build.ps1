@@ -87,6 +87,7 @@ $sources = @(
     (Join-Path $desktopRoot 'src\AppAssets.cs'),
     (Join-Path $desktopRoot 'src\SplashOverlay.cs'),
     (Join-Path $desktopRoot 'src\InvisibleWindowPreloader.cs'),
+    (Join-Path $desktopRoot 'src\WebViewRenderSynchronizer.cs'),
     (Join-Path $desktopRoot 'src\MainWindow.cs'),
     (Join-Path $desktopRoot 'src\TrayController.cs'),
     (Join-Path $desktopRoot 'src\DesktopApplication.cs'),

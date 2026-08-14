@@ -4,10 +4,11 @@ desktop/publish/
 desktop/test-output/
 desktop/obj/
 
-# Local vision-test images are organized under samples but not published by default.
+# 与桌面封装无关、但当前本机配置仍可能引用的兼容脚本。
+/dsh-vision-mcp.cjs
+
+# 本地临时图片不进入桌面项目。
 /clip-test.png
-samples/vision/*
-!samples/vision/.gitkeep
 
 # Local runtime output.
 *.log

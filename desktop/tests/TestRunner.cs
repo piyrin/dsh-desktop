@@ -54,6 +54,7 @@ internal sealed class TestRunner
         AppAssetsTests.Register(runner);
         SplashOverlayTests.Register(runner);
         InvisibleWindowPreloaderTests.Register(runner);
+        WebViewRenderSynchronizerTests.Register(runner);
         DshInstallationTests.Register(runner);
         DshReadinessTests.Register(runner);
         BackendOwnershipTests.Register(runner);

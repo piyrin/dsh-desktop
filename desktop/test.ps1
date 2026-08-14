@@ -22,6 +22,7 @@ $sources = @(
   (Join-Path $root 'tests\AppAssetsTests.cs'),
   (Join-Path $root 'tests\SplashOverlayTests.cs'),
   (Join-Path $root 'tests\InvisibleWindowPreloaderTests.cs'),
+  (Join-Path $root 'tests\WebViewRenderSynchronizerTests.cs'),
   (Join-Path $root 'tests\DshInstallationTests.cs'),
   (Join-Path $root 'tests\DshReadinessTests.cs'),
   (Join-Path $root 'tests\BackendOwnershipTests.cs'),
@@ -36,6 +37,7 @@ $sources = @(
   (Join-Path $root 'src\AppAssets.cs'),
   (Join-Path $root 'src\SplashOverlay.cs'),
   (Join-Path $root 'src\InvisibleWindowPreloader.cs'),
+  (Join-Path $root 'src\WebViewRenderSynchronizer.cs'),
   (Join-Path $root 'src\CommandLocator.cs'),
   (Join-Path $root 'src\DshInstallation.cs'),
   (Join-Path $root 'src\BackendLaunchSpec.cs')
