@@ -5,7 +5,6 @@ using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 
 internal static class ActivationProtocol
 {
@@ -42,11 +41,13 @@ internal sealed class SingleInstanceCoordinator : IDisposable
         lock (sync)
         {
             ThrowIfDisposed();
-            if (electionAttempted) return primary;
-            electionAttempted = true;
-            primaryThread = new Thread(RunPrimary);
-            primaryThread.IsBackground = true;
-            primaryThread.Start();
+            if (!electionAttempted)
+            {
+                electionAttempted = true;
+                primaryThread = new Thread(RunPrimary);
+                primaryThread.IsBackground = true;
+                primaryThread.Start();
+            }
         }
 
         electionCompleted.WaitOne();
@@ -64,15 +65,7 @@ internal sealed class SingleInstanceCoordinator : IDisposable
         SignalAttempt attempt = new SignalAttempt();
         using (Timer deadline = new Timer(delegate { attempt.Expire(); }, null, waitMilliseconds, Timeout.Infinite))
         {
-            Task<bool> operation = Task.Factory.StartNew(delegate {
-                return SendActivation(attempt, stopwatch, waitMilliseconds);
-            });
-            if (!operation.Wait(RemainingMilliseconds(stopwatch, waitMilliseconds)))
-            {
-                attempt.Expire();
-                return false;
-            }
-            return !attempt.IsExpired && stopwatch.ElapsedMilliseconds <= waitMilliseconds && operation.Result;
+            return SendActivation(attempt, stopwatch, waitMilliseconds);
         }
     }
 
@@ -189,9 +182,23 @@ internal sealed class SingleInstanceCoordinator : IDisposable
         {
             int remainingMilliseconds = ClientReadTimeoutMilliseconds - (int)stopwatch.ElapsedMilliseconds;
             if (remainingMilliseconds <= 0) return null;
-            IAsyncResult read = stream.BeginRead(buffer, 0, 1, null, null);
-            if (!read.AsyncWaitHandle.WaitOne(remainingMilliseconds)) return null;
-            if (stream.EndRead(read) == 0) return null;
+            using (ManualResetEvent readCompleted = new ManualResetEvent(false))
+            {
+                IAsyncResult read = stream.BeginRead(buffer, 0, 1, delegate(IAsyncResult ignored) {
+                    try { readCompleted.Set(); }
+                    catch (ObjectDisposedException) { }
+                }, null);
+                if (!readCompleted.WaitOne(remainingMilliseconds))
+                {
+                    AbortRead(stream, read, readCompleted);
+                    return null;
+                }
+                int readCount;
+                try { readCount = stream.EndRead(read); }
+                catch (IOException) { return null; }
+                catch (ObjectDisposedException) { return null; }
+                if (readCount == 0) return null;
+            }
             bytes.Add(buffer[0]);
             if (buffer[0] == '\n') return Encoding.UTF8.GetString(bytes.ToArray());
         }
@@ -205,23 +212,28 @@ internal sealed class SingleInstanceCoordinator : IDisposable
             if (remainingMilliseconds <= 0) return false;
 
             NamedPipeClientStream client = null;
+            bool connected = false;
             try
             {
                 client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out);
                 if (!attempt.SetClient(client)) return false;
                 client.Connect(remainingMilliseconds);
+                connected = true;
                 if (attempt.IsExpired) return false;
-                using (StreamWriter writer = new StreamWriter(client, new UTF8Encoding(false), 1024, true))
+                byte[] activation = new UTF8Encoding(false).GetBytes(ActivationProtocol.SerializeActivate());
+                IAsyncResult write = client.BeginWrite(activation, 0, activation.Length, null, null);
+                if (!write.AsyncWaitHandle.WaitOne(RemainingMilliseconds(stopwatch, budgetMilliseconds)))
                 {
-                    writer.Write(ActivationProtocol.SerializeActivate());
-                    if (attempt.IsExpired) return false;
-                    writer.Flush();
+                    attempt.Expire();
+                    return false;
                 }
+                client.EndWrite(write);
+                if (attempt.IsExpired) return false;
                 return !attempt.IsExpired && RemainingMilliseconds(stopwatch, budgetMilliseconds) >= 0;
             }
             catch (IOException)
             {
-                if (attempt.IsExpired) return false;
+                if (attempt.IsExpired || connected) return false;
                 int delayMilliseconds = Math.Min(10, RemainingMilliseconds(stopwatch, budgetMilliseconds));
                 if (delayMilliseconds <= 0) return false;
                 Thread.Sleep(delayMilliseconds);
@@ -238,10 +250,26 @@ internal sealed class SingleInstanceCoordinator : IDisposable
         return false;
     }
 
+    private static void AbortRead(Stream stream, IAsyncResult read, ManualResetEvent readCompleted)
+    {
+        try { stream.Dispose(); }
+        finally
+        {
+            readCompleted.WaitOne();
+            try { stream.EndRead(read); }
+            catch (IOException) { }
+            catch (ObjectDisposedException) { }
+        }
+    }
+
     private void OnActivateRequested()
     {
         EventHandler handler = ActivateRequested;
-        if (handler != null) handler(this, EventArgs.Empty);
+        if (handler == null) return;
+        ThreadPool.QueueUserWorkItem(delegate {
+            try { handler(this, EventArgs.Empty); }
+            catch (Exception) { }
+        });
     }
 
     private static int ToBoundedMilliseconds(TimeSpan timeout)
