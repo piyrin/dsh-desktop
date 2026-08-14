@@ -46,6 +46,25 @@ internal static class InvisibleWindowPreloaderTests
             AssertEx.True(window.ShowActivated);
             AssertEx.True(window.ShowInTaskbar);
         });
+
+        runner.Add("WebView preload cleanup preserves the original throw-site stack", delegate {
+            InvalidOperationException original = CapturePreloadThrowSite();
+            CleanupFaultingPreloadWindow window = new CleanupFaultingPreloadWindow(original);
+            Exception observed = null;
+
+            try { InvisibleWindowPreloader.PrepareAsync(window).GetAwaiter().GetResult(); }
+            catch (Exception exception) { observed = exception; }
+
+            AssertEx.True(Object.ReferenceEquals(original, observed));
+            AssertEx.True(observed.StackTrace != null
+                && observed.StackTrace.IndexOf("ThrowFromPreloadThrowSite", StringComparison.Ordinal) >= 0);
+            AssertEx.Equal(1, window.HideCalls);
+            AssertEx.False(window.IsVisible);
+            AssertEx.Equal("hide,opacity,activate,taskbar", String.Join(",", window.CleanupSequence.ToArray()));
+            AssertEx.Equal(1.0, window.Opacity);
+            AssertEx.True(window.ShowActivated);
+            AssertEx.True(window.ShowInTaskbar);
+        });
     }
 
     private sealed class FakePreloadWindow : IInvisiblePreloadWindow
@@ -160,5 +179,18 @@ internal static class InvisibleWindowPreloaderTests
             CleanupSequence.Add("hide");
             throw new InvalidOperationException("hide failed");
         }
+    }
+
+    private static InvalidOperationException CapturePreloadThrowSite()
+    {
+        try { ThrowFromPreloadThrowSite(); }
+        catch (InvalidOperationException exception) { return exception; }
+        throw new InvalidOperationException("The preload throw-site helper did not throw.");
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void ThrowFromPreloadThrowSite()
+    {
+        throw new InvalidOperationException("preload failed at the marked throw site");
     }
 }

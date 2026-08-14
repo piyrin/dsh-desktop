@@ -1,5 +1,6 @@
-using System.Threading.Tasks;
 using System;
+using System.Runtime.ExceptionServices;
+using System.Threading.Tasks;
 
 internal interface IInvisiblePreloadWindow
 {
@@ -45,7 +46,8 @@ internal static class InvisibleWindowPreloader
                 try { primaryFailure.Data["InvisiblePreloadCleanupFailure"] = cleanupFailure; }
                 catch (Exception) { }
             }
-            throw primaryFailure;
+            ExceptionDispatchInfo.Capture(primaryFailure).Throw();
+            return;
         }
         if (cleanupFailure != null) throw cleanupFailure;
     }
