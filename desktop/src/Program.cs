@@ -73,7 +73,7 @@ internal static class Program
                 backend,
                 tray,
                 new WpfDispatcherAdapter(application.Dispatcher),
-                delegate(TimeSpan duration) { return Task.Delay(duration); },
+                delegate { return new StopwatchStartupTimer(); },
                 delegate { OpenLogs(paths); },
                 application.Shutdown,
                 delegate(string message) { TryLog(paths, message); },
@@ -202,10 +202,17 @@ internal static class Program
         public Task InitializeWebViewAsync() { return window.InitializeWebViewAsync(); }
         public Task NavigateToDsh(Uri uri) { return window.NavigateToDsh(uri); }
         public void ShowAnimatedSplash() { window.ShowAnimatedSplash(); }
-        public void ShowWebContent() { window.ShowWebContent(); }
-        public void ShowError(string title, string detail, Action retry, Action viewLogs, Action exit)
+        public void ShowStaticWaiting() { window.ShowStaticWaiting(); }
+        public void PresentWebContent(bool revealWindow) { window.PresentWebContent(revealWindow); }
+        public void PresentError(
+            string title,
+            string detail,
+            Action retry,
+            Action viewLogs,
+            Action exit,
+            bool revealWindow)
         {
-            window.ShowError(title, detail, retry, viewLogs, exit);
+            window.PresentError(title, detail, retry, viewLogs, exit, revealWindow);
         }
         public void RestoreWithoutAnimation() { window.RestoreWithoutAnimation(); }
         public void Hide() { window.Hide(); }

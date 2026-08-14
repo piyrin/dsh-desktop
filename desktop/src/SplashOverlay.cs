@@ -92,6 +92,19 @@ internal sealed class SplashOverlay : Grid
         isAnimationRunning = true;
     }
 
+    internal void ShowStatic()
+    {
+        if (isAnimationRunning)
+        {
+            revealStoryboard.Remove(this);
+            shimmerStoryboard.Remove(this);
+        }
+        isAnimationRunning = false;
+        revealViewport.Width = 420;
+        revealViewport.OpacityMask = null;
+        Visibility = Visibility.Visible;
+    }
+
     internal void StopAndHide()
     {
         if (isAnimationRunning)

@@ -1,4 +1,7 @@
 using System;
+using System.Drawing;
+using System.IO;
+using System.Windows.Forms;
 
 internal static class TrayControllerTests
 {
@@ -56,6 +59,27 @@ internal static class TrayControllerTests
 
             AssertEx.Equal(1, factory.View.DisposeCalls);
         });
+
+        runner.Add("native tray construction disposes the claimed icon when a property setter throws", delegate {
+            ThrowingNativeNotifyIconFactory nativeFactory = new ThrowingNativeNotifyIconFactory();
+            string iconPath = Path.GetFullPath(Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory, "..", "..", "dsh-whale.ico"));
+            TrayMenuEntry[] entries = new[]
+            {
+                new TrayMenuEntry("Open", TrayCommand.Open, false)
+            };
+            bool threwExpected = false;
+
+            try { new NotifyIconTrayView(iconPath, entries, nativeFactory); }
+            catch (InvalidOperationException exception)
+            {
+                threwExpected = exception.Message == "native text setter failed";
+            }
+
+            AssertEx.True(threwExpected);
+            AssertEx.Equal(1, nativeFactory.CreateCalls);
+            AssertEx.Equal(1, nativeFactory.Icon.DisposeCalls);
+        });
     }
 
     private static void AssertEntry(TrayMenuEntry entry, string text, TrayCommand command, bool separator)
@@ -93,6 +117,37 @@ internal static class TrayControllerTests
         {
             EventHandler<TrayCommandEventArgs> handler = CommandInvoked;
             if (handler != null) handler(this, new TrayCommandEventArgs(command));
+        }
+    }
+
+    private sealed class ThrowingNativeNotifyIconFactory : INativeNotifyIconFactory
+    {
+        internal readonly ThrowingNativeNotifyIcon Icon = new ThrowingNativeNotifyIcon();
+        internal int CreateCalls;
+        public INativeNotifyIcon Create()
+        {
+            CreateCalls++;
+            return Icon;
+        }
+    }
+
+    private sealed class ThrowingNativeNotifyIcon : INativeNotifyIcon
+    {
+        private EventHandler doubleClick;
+        internal int DisposeCalls;
+        public Icon Icon { set { } }
+        public string Text { set { throw new InvalidOperationException("native text setter failed"); } }
+        public ContextMenuStrip ContextMenuStrip { set { } }
+        public bool Visible { set { } }
+        public event EventHandler DoubleClick
+        {
+            add { doubleClick += value; }
+            remove { doubleClick -= value; }
+        }
+        public void Dispose()
+        {
+            DisposeCalls++;
+            doubleClick = null;
         }
     }
 }

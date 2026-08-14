@@ -38,9 +38,10 @@ internal static class DesktopApplicationTests
 
         runner.Add("cold start shows splash only after threshold while readiness remains incomplete", delegate {
             DesktopHarness harness = new DesktopHarness();
+            harness.Timer.ElapsedValue = TimeSpan.FromMilliseconds(3001);
             Task run = harness.Application.RunColdStartAsync();
 
-            harness.DelayCompletion.SetResult(true);
+            harness.Timer.ThresholdCompletion.SetResult(true);
             AssertEx.True(WaitUntil(delegate { return harness.Window.SplashCalls == 1; }));
             harness.Window.InitializeCompletion.SetResult(true);
             harness.Backend.EnsureCompletion.SetResult(Ready());
@@ -49,17 +50,43 @@ internal static class DesktopApplicationTests
             AssertEx.Equal(1, harness.Window.WebCalls);
         });
 
-        runner.Add("ready cold start never waits for the splash delay", delegate {
+        runner.Add("readiness winning just after threshold never waits for the timer", delegate {
             DesktopHarness harness = new DesktopHarness();
+            harness.Timer.ElapsedValue = TimeSpan.FromMilliseconds(3001);
             harness.Window.InitializeCompletion.SetResult(true);
             harness.Backend.EnsureCompletion.SetResult(Ready());
 
             Task run = harness.Application.RunColdStartAsync();
 
             AssertEx.True(run.Wait(1000));
-            AssertEx.False(harness.DelayCompletion.Task.IsCompleted);
+            AssertEx.False(harness.Timer.ThresholdCompletion.Task.IsCompleted);
             AssertEx.Equal(0, harness.Window.SplashCalls);
             AssertEx.Equal(1, harness.Window.WebCalls);
+        });
+
+        runner.Add("exactly three elapsed seconds does not show splash", delegate {
+            DesktopHarness harness = new DesktopHarness();
+            harness.Timer.ElapsedValue = TimeSpan.FromSeconds(3);
+            Task run = harness.Application.RunColdStartAsync();
+
+            harness.Timer.ThresholdCompletion.SetResult(true);
+            Thread.Sleep(20);
+            AssertEx.Equal(0, harness.Window.SplashCalls);
+            harness.Window.InitializeCompletion.SetResult(true);
+            harness.Backend.EnsureCompletion.SetResult(Ready());
+            AssertEx.True(run.Wait(1000));
+        });
+
+        runner.Add("elapsed time beyond three seconds shows splash", delegate {
+            DesktopHarness harness = new DesktopHarness();
+            harness.Timer.ElapsedValue = TimeSpan.FromTicks(TimeSpan.FromSeconds(3).Ticks + 1);
+            Task run = harness.Application.RunColdStartAsync();
+
+            harness.Timer.ThresholdCompletion.SetResult(true);
+            AssertEx.True(WaitUntil(delegate { return harness.Window.SplashCalls == 1; }));
+            harness.Window.InitializeCompletion.SetResult(true);
+            harness.Backend.EnsureCompletion.SetResult(Ready());
+            AssertEx.True(run.Wait(1000));
         });
 
         runner.Add("WebView failure is actionable and retry initiates a fresh attempt", delegate {
@@ -127,14 +154,44 @@ internal static class DesktopApplicationTests
             AssertEx.Equal(1, harness.ShutdownCalls);
         });
 
-        runner.Add("explicit exit never asks to stop an external backend", delegate {
+        runner.Add("exit delegates the external ownership decision to the serialized backend stop", delegate {
             DesktopHarness harness = new DesktopHarness();
             harness.Backend.OwnershipValue = BackendOwnership.External;
 
             harness.Application.ExitAsync().GetAwaiter().GetResult();
 
             AssertEx.True(harness.Tray.IsDisposed);
-            AssertEx.Equal(0, harness.Backend.StopCalls);
+            AssertEx.Equal(1, harness.Backend.StopCalls);
+        });
+
+        runner.Add("exit stop observes ownership acquired after exit entry", delegate {
+            DesktopHarness harness = new DesktopHarness();
+            harness.Backend.OwnershipValue = BackendOwnership.None;
+            harness.Backend.BeforeStop = delegate {
+                harness.Backend.OwnershipValue = BackendOwnership.Owned;
+            };
+
+            harness.Application.ExitAsync().GetAwaiter().GetResult();
+
+            AssertEx.Equal(1, harness.Backend.StopCalls);
+            AssertEx.Equal(BackendOwnership.Owned, harness.Backend.OwnershipValue);
+        });
+
+        runner.Add("tray disposal failure does not interrupt ordered exit teardown", delegate {
+            List<string> sequence = new List<string>();
+            DesktopHarness harness = new DesktopHarness();
+            harness.Tray.Sequence = sequence;
+            harness.Tray.ThrowOnDispose = true;
+            harness.Backend.Sequence = sequence;
+            harness.Window.Sequence = sequence;
+            harness.ShutdownAction = delegate { sequence.Add("shutdown"); };
+
+            harness.Application.ExitAsync().GetAwaiter().GetResult();
+
+            AssertEx.Equal("tray.dispose,backend.stop,window.close,shutdown", String.Join(",", sequence.ToArray()));
+            AssertEx.True(harness.Window.LogMessages.Exists(delegate(string message) {
+                return message.IndexOf("tray", StringComparison.OrdinalIgnoreCase) >= 0;
+            }));
         });
 
         runner.Add("close racing with explicit exit is not converted into hide", delegate {
@@ -160,24 +217,90 @@ internal static class DesktopApplicationTests
 
             harness.Dispatcher.HasAccess = true;
             harness.Dispatcher.RunPending();
-            AssertEx.Equal(1, harness.Window.RestoreCalls);
+            AssertEx.Equal(1, harness.Window.WaitingCalls);
+            AssertEx.Equal(0, harness.Window.RestoreCalls);
             AssertEx.Equal(0, harness.Window.SplashCalls);
+        });
+
+        runner.Add("secondary activation during cold start shows static waiting then ready content", delegate {
+            DesktopHarness harness = new DesktopHarness();
+            Task run = harness.Application.RunColdStartAsync();
+
+            harness.Application.Restore(OpenReason.SecondaryActivation);
+
+            AssertEx.Equal(1, harness.Window.WaitingCalls);
+            AssertEx.True(harness.Window.IsVisible);
+            AssertEx.Equal(0, harness.Window.WebCalls);
+            AssertEx.Equal(0, harness.Window.SplashCalls);
+            harness.Window.InitializeCompletion.SetResult(true);
+            harness.Backend.EnsureCompletion.SetResult(Ready());
+            AssertEx.True(run.Wait(1000));
+            AssertEx.Equal(1, harness.Window.NavigateCalls);
+            AssertEx.Equal(1, harness.Window.WebCalls);
+        });
+
+        runner.Add("ready completion after close never transiently shows the window", delegate {
+            DesktopHarness harness = new DesktopHarness();
+            harness.Timer.ElapsedValue = TimeSpan.FromMilliseconds(3001);
+            Task run = harness.Application.RunColdStartAsync();
+            harness.Timer.ThresholdCompletion.SetResult(true);
+            AssertEx.True(WaitUntil(delegate { return harness.Window.SplashCalls == 1; }));
+            harness.Window.RaiseClosing();
+            int historyAfterClose = harness.Window.VisibilityHistory.Count;
+
+            harness.Window.InitializeCompletion.SetResult(true);
+            harness.Backend.EnsureCompletion.SetResult(Ready());
+            AssertEx.True(run.Wait(1000));
+
+            AssertEx.False(harness.Window.WasVisibleAfter(historyAfterClose));
+        });
+
+        runner.Add("error completion after close never transiently shows the window", delegate {
+            DesktopHarness harness = new DesktopHarness();
+            harness.Timer.ElapsedValue = TimeSpan.FromMilliseconds(3001);
+            Task run = harness.Application.RunColdStartAsync();
+            harness.Timer.ThresholdCompletion.SetResult(true);
+            AssertEx.True(WaitUntil(delegate { return harness.Window.SplashCalls == 1; }));
+            harness.Window.RaiseClosing();
+            int historyAfterClose = harness.Window.VisibilityHistory.Count;
+
+            harness.Backend.EnsureCompletion.SetResult(new ReadinessResult(
+                ReadinessState.NotReady, TimeSpan.FromSeconds(30), "timed out"));
+            AssertEx.True(run.Wait(1000));
+
+            AssertEx.Equal(1, harness.Window.ErrorCalls);
+            AssertEx.False(harness.Window.WasVisibleAfter(historyAfterClose));
         });
 
         runner.Add("owned restart animates only after three second delay", delegate {
             DesktopHarness harness = new DesktopHarness();
             harness.Backend.OwnershipValue = BackendOwnership.Owned;
             harness.Window.InitializeCompletion.SetResult(true);
+            harness.Timer.ElapsedValue = TimeSpan.FromMilliseconds(3001);
 
             Task restart = harness.Application.RestartServiceAsync();
             AssertEx.Equal(1, harness.Backend.RestartCalls);
             AssertEx.Equal(0, harness.Window.SplashCalls);
-            harness.DelayCompletion.SetResult(true);
+            harness.Timer.ThresholdCompletion.SetResult(true);
             AssertEx.True(WaitUntil(delegate { return harness.Window.SplashCalls == 1; }));
             harness.Backend.RestartCompletion.SetResult(Ready());
 
             AssertEx.True(restart.Wait(1000));
             AssertEx.Equal(1, harness.Window.WebCalls);
+        });
+
+        runner.Add("restart completion after close never transiently shows the window", delegate {
+            DesktopHarness harness = new DesktopHarness();
+            harness.Backend.OwnershipValue = BackendOwnership.Owned;
+            harness.Window.InitializeCompletion.SetResult(true);
+            Task restart = harness.Application.RestartServiceAsync();
+            harness.Window.RaiseClosing();
+            int historyAfterClose = harness.Window.VisibilityHistory.Count;
+
+            harness.Backend.RestartCompletion.SetResult(Ready());
+            AssertEx.True(restart.Wait(1000));
+
+            AssertEx.False(harness.Window.WasVisibleAfter(historyAfterClose));
         });
 
         runner.Add("external restart stays disabled and does not call backend", delegate {
@@ -228,20 +351,27 @@ internal static class DesktopApplicationTests
         internal readonly FakeBackend Backend = new FakeBackend();
         internal readonly FakeTray Tray = new FakeTray();
         internal readonly FakeDispatcher Dispatcher = new FakeDispatcher();
-        internal TaskCompletionSource<bool> DelayCompletion = new TaskCompletionSource<bool>();
+        internal readonly FakeStartupTimer Timer = new FakeStartupTimer();
         internal int ShutdownCalls;
+        internal Action ShutdownAction;
         internal DesktopApplication Application;
 
         internal DesktopHarness()
+        {
+            ShutdownAction = delegate { ShutdownCalls++; };
+            RecreateApplication();
+        }
+
+        internal void RecreateApplication()
         {
             Application = new DesktopApplication(
                 Window,
                 Backend,
                 Tray,
                 Dispatcher,
-                delegate(TimeSpan delay) { return DelayCompletion.Task; },
+                delegate { return Timer; },
                 delegate { Window.ViewLogsCalls++; },
-                delegate { ShutdownCalls++; },
+                delegate { ShutdownAction(); },
                 delegate(string message) { Window.LogMessages.Add(message); },
                 new Uri("http://127.0.0.1:8080/"));
         }
@@ -255,6 +385,7 @@ internal static class DesktopApplicationTests
         internal int SplashCalls;
         internal int WebCalls;
         internal int ErrorCalls;
+        internal int WaitingCalls;
         internal int RestoreCalls;
         internal int HideCalls;
         internal int CloseCalls;
@@ -265,13 +396,38 @@ internal static class DesktopApplicationTests
         internal Action ViewLogsAction;
         internal Action ExitAction;
         internal readonly List<string> LogMessages = new List<string>();
+        internal readonly List<bool> VisibilityHistory = new List<bool>();
+        internal List<string> Sequence;
+        internal bool IsVisible;
 
         public event CancelEventHandler Closing;
         public Task InitializeWebViewAsync() { InitializeCalls++; return InitializeCompletion.Task; }
         public Task NavigateToDsh(Uri uri) { NavigateCalls++; return Task.FromResult(true); }
-        public void ShowAnimatedSplash() { SplashCalls++; }
-        public void ShowWebContent() { WebCalls++; }
+        public void ShowAnimatedSplash() { SplashCalls++; SetVisible(true); }
+        public void ShowStaticWaiting() { WaitingCalls++; SetVisible(true); }
+        public void PresentWebContent(bool revealWindow)
+        {
+            WebCalls++;
+            if (revealWindow) SetVisible(true);
+        }
+        public void ShowWebContent() { PresentWebContent(true); }
+        public void PresentError(
+            string title,
+            string detail,
+            Action retry,
+            Action viewLogs,
+            Action exit,
+            bool revealWindow)
+        {
+            RecordError(title, detail, retry, viewLogs, exit);
+            if (revealWindow) SetVisible(true);
+        }
         public void ShowError(string title, string detail, Action retry, Action viewLogs, Action exit)
+        {
+            RecordError(title, detail, retry, viewLogs, exit);
+            SetVisible(true);
+        }
+        private void RecordError(string title, string detail, Action retry, Action viewLogs, Action exit)
         {
             ErrorCalls++;
             ErrorTitle = title;
@@ -280,16 +436,32 @@ internal static class DesktopApplicationTests
             ViewLogsAction = viewLogs;
             ExitAction = exit;
         }
-        public void RestoreWithoutAnimation() { RestoreCalls++; }
-        public void Hide() { HideCalls++; }
-        public void Close() { CloseCalls++; }
-        internal int SurfaceCalls { get { return SplashCalls + WebCalls + ErrorCalls; } }
+        public void RestoreWithoutAnimation() { RestoreCalls++; SetVisible(true); }
+        public void Hide() { HideCalls++; SetVisible(false); }
+        public void Close()
+        {
+            CloseCalls++;
+            if (Sequence != null) Sequence.Add("window.close");
+            SetVisible(false);
+        }
+        internal int SurfaceCalls { get { return SplashCalls + WaitingCalls + WebCalls + ErrorCalls; } }
+        internal bool WasVisibleAfter(int historyIndex)
+        {
+            for (int index = historyIndex; index < VisibilityHistory.Count; index++)
+                if (VisibilityHistory[index]) return true;
+            return false;
+        }
         internal CancelEventArgs RaiseClosing()
         {
             CancelEventArgs arguments = new CancelEventArgs();
             CancelEventHandler handler = Closing;
             if (handler != null) handler(this, arguments);
             return arguments;
+        }
+        private void SetVisible(bool visible)
+        {
+            IsVisible = visible;
+            VisibilityHistory.Add(visible);
         }
     }
 
@@ -303,12 +475,14 @@ internal static class DesktopApplicationTests
         internal int RestartCalls;
         internal int StopCalls;
         internal Action BeforeStop;
+        internal List<string> Sequence;
         public BackendOwnership Ownership { get { return OwnershipValue; } }
         public Task<ReadinessResult> EnsureReadyAsync(CancellationToken token) { EnsureCalls++; return EnsureCompletion.Task; }
         public Task<ReadinessResult> RestartAsync(CancellationToken token) { RestartCalls++; return RestartCompletion.Task; }
         public Task StopOwnedAsync()
         {
             StopCalls++;
+            if (Sequence != null) Sequence.Add("backend.stop");
             if (BeforeStop != null) BeforeStop();
             return StopCompletion == null ? Task.FromResult(true) : StopCompletion.Task;
         }
@@ -342,14 +516,30 @@ internal static class DesktopApplicationTests
         }
         internal bool IsDisposed;
         internal bool RestartEnabled;
+        internal bool ThrowOnDispose;
+        internal List<string> Sequence;
         public void SetRestartEnabled(bool enabled) { RestartEnabled = enabled; }
         public void Dispose()
         {
             IsDisposed = true;
+            if (Sequence != null) Sequence.Add("tray.dispose");
             openRequested = null;
             restartServiceRequested = null;
             viewLogsRequested = null;
             exitRequested = null;
+            if (ThrowOnDispose) throw new InvalidOperationException("tray disposal failed");
+        }
+    }
+
+    private sealed class FakeStartupTimer : IStartupTimer
+    {
+        internal readonly TaskCompletionSource<bool> ThresholdCompletion = new TaskCompletionSource<bool>();
+        internal TimeSpan ElapsedValue;
+        public TimeSpan Elapsed { get { return ElapsedValue; } }
+        public Task WaitForThresholdAsync(TimeSpan threshold)
+        {
+            AssertEx.Equal(TimeSpan.FromSeconds(3), threshold);
+            return ThresholdCompletion.Task;
         }
     }
 

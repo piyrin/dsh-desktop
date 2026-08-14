@@ -134,18 +134,65 @@ internal sealed class NotifyIconTrayViewFactory : ITrayIconViewFactory
     }
 }
 
+internal interface INativeNotifyIcon : IDisposable
+{
+    Icon Icon { set; }
+    string Text { set; }
+    ContextMenuStrip ContextMenuStrip { set; }
+    bool Visible { set; }
+    event EventHandler DoubleClick;
+}
+
+internal interface INativeNotifyIconFactory
+{
+    INativeNotifyIcon Create();
+}
+
+internal sealed class NativeNotifyIconFactory : INativeNotifyIconFactory
+{
+    public INativeNotifyIcon Create()
+    {
+        return new NativeNotifyIcon();
+    }
+}
+
+internal sealed class NativeNotifyIcon : INativeNotifyIcon
+{
+    private readonly NotifyIcon notifyIcon = new NotifyIcon();
+
+    public Icon Icon { set { notifyIcon.Icon = value; } }
+    public string Text { set { notifyIcon.Text = value; } }
+    public ContextMenuStrip ContextMenuStrip { set { notifyIcon.ContextMenuStrip = value; } }
+    public bool Visible { set { notifyIcon.Visible = value; } }
+    public event EventHandler DoubleClick
+    {
+        add { notifyIcon.DoubleClick += value; }
+        remove { notifyIcon.DoubleClick -= value; }
+    }
+    public void Dispose() { notifyIcon.Dispose(); }
+}
+
 internal sealed class NotifyIconTrayView : ITrayIconView
 {
     private readonly Dictionary<TrayCommand, ToolStripMenuItem> commandItems =
         new Dictionary<TrayCommand, ToolStripMenuItem>();
     private Icon icon;
     private ContextMenuStrip menu;
-    private NotifyIcon notifyIcon;
+    private INativeNotifyIcon notifyIcon;
     private bool disposed;
 
     internal NotifyIconTrayView(string iconPath, TrayMenuEntry[] entries)
+        : this(iconPath, entries, new NativeNotifyIconFactory())
+    {
+    }
+
+    internal NotifyIconTrayView(
+        string iconPath,
+        TrayMenuEntry[] entries,
+        INativeNotifyIconFactory nativeFactory)
     {
         if (entries == null) throw new ArgumentNullException("entries");
+        if (nativeFactory == null) throw new ArgumentNullException("nativeFactory");
         try
         {
             icon = new Icon(iconPath);
@@ -165,18 +212,19 @@ internal sealed class NotifyIconTrayView : ITrayIconView
                 menu.Items.Add(item);
             }
 
-            notifyIcon = new NotifyIcon
-            {
-                Icon = icon,
-                Text = AppAssets.ApplicationTitle,
-                ContextMenuStrip = menu,
-                Visible = true
-            };
+            notifyIcon = nativeFactory.Create();
+            if (notifyIcon == null)
+                throw new InvalidOperationException("Native tray icon factory returned no icon.");
+            notifyIcon.Icon = icon;
+            notifyIcon.Text = AppAssets.ApplicationTitle;
+            notifyIcon.ContextMenuStrip = menu;
+            notifyIcon.Visible = true;
             notifyIcon.DoubleClick += OnDoubleClick;
         }
         catch
         {
-            Dispose();
+            try { Dispose(); }
+            catch (Exception) { }
             throw;
         }
     }
@@ -195,24 +243,32 @@ internal sealed class NotifyIconTrayView : ITrayIconView
     {
         if (disposed) return;
         disposed = true;
+        Exception failure = null;
         if (notifyIcon != null)
         {
-            notifyIcon.Visible = false;
-            notifyIcon.DoubleClick -= OnDoubleClick;
-            notifyIcon.ContextMenuStrip = null;
-            notifyIcon.Dispose();
-            notifyIcon = null;
+            try { notifyIcon.Visible = false; }
+            catch (Exception exception) { failure = exception; }
+            try { notifyIcon.DoubleClick -= OnDoubleClick; }
+            catch (Exception exception) { if (failure == null) failure = exception; }
+            try { notifyIcon.ContextMenuStrip = null; }
+            catch (Exception exception) { if (failure == null) failure = exception; }
+            try { notifyIcon.Dispose(); }
+            catch (Exception exception) { if (failure == null) failure = exception; }
+            finally { notifyIcon = null; }
         }
         if (menu != null)
         {
-            menu.Dispose();
-            menu = null;
+            try { menu.Dispose(); }
+            catch (Exception exception) { if (failure == null) failure = exception; }
+            finally { menu = null; }
         }
         if (icon != null)
         {
-            icon.Dispose();
-            icon = null;
+            try { icon.Dispose(); }
+            catch (Exception exception) { if (failure == null) failure = exception; }
+            finally { icon = null; }
         }
+        if (failure != null) throw failure;
     }
 
     private void OnDoubleClick(object sender, EventArgs eventArgs)

@@ -96,7 +96,25 @@ internal sealed class MainWindow : Window
         ShowWindow();
     }
 
+    internal void ShowStaticWaiting()
+    {
+        VerifyAccess();
+        presentationState.ShowStaticWaiting();
+        DesktopWindowChrome.Apply(this, presentationState.WindowChrome);
+        errorOverlay.Visibility = Visibility.Collapsed;
+        webView.Visibility = Visibility.Hidden;
+        splashOverlay.ShowStatic();
+        ShowWindow();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        ActivateAndFocus();
+    }
+
     internal void ShowWebContent()
+    {
+        PresentWebContent(true);
+    }
+
+    internal void PresentWebContent(bool revealWindow)
     {
         VerifyAccess();
         presentationState.ShowWebContent();
@@ -104,7 +122,7 @@ internal sealed class MainWindow : Window
         splashOverlay.StopAndHide();
         errorOverlay.Visibility = Visibility.Collapsed;
         webView.Visibility = Visibility.Visible;
-        ShowWindow();
+        if (revealWindow) ShowWindow();
     }
 
     internal void ShowError(
@@ -113,6 +131,17 @@ internal sealed class MainWindow : Window
         Action retry,
         Action viewLogs,
         Action exit)
+    {
+        PresentError(title, detail, retry, viewLogs, exit, true);
+    }
+
+    internal void PresentError(
+        string title,
+        string detail,
+        Action retry,
+        Action viewLogs,
+        Action exit,
+        bool revealWindow)
     {
         VerifyAccess();
         if (retry == null) throw new ArgumentNullException("retry");
@@ -172,8 +201,11 @@ internal sealed class MainWindow : Window
         content.Children.Add(actions);
         errorOverlay.Children.Add(content);
         errorOverlay.Visibility = Visibility.Visible;
-        ShowWindow();
-        retryButton.Focus();
+        if (revealWindow)
+        {
+            ShowWindow();
+            retryButton.Focus();
+        }
     }
 
     internal void RestoreWithoutAnimation()
@@ -181,20 +213,32 @@ internal sealed class MainWindow : Window
         VerifyAccess();
         presentationState.RestoreWithoutAnimation();
         DesktopWindowChrome.Apply(this, presentationState.WindowChrome);
-        splashOverlay.StopAndHide();
         if (presentationState.Surface == DesktopSurface.Error)
         {
+            splashOverlay.StopAndHide();
             webView.Visibility = Visibility.Hidden;
             errorOverlay.Visibility = Visibility.Visible;
         }
+        else if (presentationState.Surface == DesktopSurface.Waiting)
+        {
+            webView.Visibility = Visibility.Hidden;
+            errorOverlay.Visibility = Visibility.Collapsed;
+            splashOverlay.ShowStatic();
+        }
         else
         {
+            splashOverlay.StopAndHide();
             errorOverlay.Visibility = Visibility.Collapsed;
             webView.Visibility = Visibility.Visible;
         }
 
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         ShowWindow();
+        ActivateAndFocus();
+    }
+
+    private void ActivateAndFocus()
+    {
         Activate();
         Topmost = true;
         Topmost = false;

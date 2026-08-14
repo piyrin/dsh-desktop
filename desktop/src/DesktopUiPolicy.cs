@@ -4,6 +4,7 @@ using System.Windows;
 internal enum DesktopSurface
 {
     Hidden,
+    Waiting,
     Splash,
     WebContent,
     Error
@@ -33,6 +34,12 @@ internal sealed class DesktopPresentationState
     {
         Surface = DesktopSurface.Splash;
         IsSplashAnimationRunning = true;
+    }
+
+    internal void ShowStaticWaiting()
+    {
+        Surface = DesktopSurface.Waiting;
+        IsSplashAnimationRunning = false;
     }
 
     internal void ShowWebContent()

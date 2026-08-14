@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -31,8 +32,15 @@ internal interface IDesktopWindow
     Task InitializeWebViewAsync();
     Task NavigateToDsh(Uri uri);
     void ShowAnimatedSplash();
-    void ShowWebContent();
-    void ShowError(string title, string detail, Action retry, Action viewLogs, Action exit);
+    void ShowStaticWaiting();
+    void PresentWebContent(bool revealWindow);
+    void PresentError(
+        string title,
+        string detail,
+        Action retry,
+        Action viewLogs,
+        Action exit,
+        bool revealWindow);
     void RestoreWithoutAnimation();
     void Hide();
     void Close();
@@ -50,6 +58,24 @@ internal interface IDesktopDispatcher
 {
     bool CheckAccess();
     void BeginInvoke(Action action);
+}
+
+internal interface IStartupTimer
+{
+    TimeSpan Elapsed { get; }
+    Task WaitForThresholdAsync(TimeSpan threshold);
+}
+
+internal sealed class StopwatchStartupTimer : IStartupTimer
+{
+    private readonly Stopwatch stopwatch = Stopwatch.StartNew();
+
+    public TimeSpan Elapsed { get { return stopwatch.Elapsed; } }
+
+    public Task WaitForThresholdAsync(TimeSpan threshold)
+    {
+        return Task.Delay(threshold);
+    }
 }
 
 internal sealed class RetryableAsyncOperation
@@ -85,7 +111,7 @@ internal sealed class DesktopApplication
     private readonly IDesktopBackend backend;
     private readonly IDesktopTray tray;
     private readonly IDesktopDispatcher dispatcher;
-    private readonly Func<TimeSpan, Task> delay;
+    private readonly Func<IStartupTimer> timerFactory;
     private readonly Action openLogs;
     private readonly Action shutdown;
     private readonly Action<string> log;
@@ -95,6 +121,7 @@ internal sealed class DesktopApplication
     private readonly object exitSync = new object();
     private volatile bool explicitExitRequested;
     private bool hiddenByClose;
+    private bool hasFinalPresentation;
     private Task exitTask;
 
     internal DesktopApplication(
@@ -102,7 +129,7 @@ internal sealed class DesktopApplication
         IDesktopBackend backend,
         IDesktopTray tray,
         IDesktopDispatcher dispatcher,
-        Func<TimeSpan, Task> delay,
+        Func<IStartupTimer> timerFactory,
         Action openLogs,
         Action shutdown,
         Action<string> log,
@@ -112,7 +139,7 @@ internal sealed class DesktopApplication
         if (backend == null) throw new ArgumentNullException("backend");
         if (tray == null) throw new ArgumentNullException("tray");
         if (dispatcher == null) throw new ArgumentNullException("dispatcher");
-        if (delay == null) throw new ArgumentNullException("delay");
+        if (timerFactory == null) throw new ArgumentNullException("timerFactory");
         if (openLogs == null) throw new ArgumentNullException("openLogs");
         if (shutdown == null) throw new ArgumentNullException("shutdown");
         if (log == null) throw new ArgumentNullException("log");
@@ -121,7 +148,7 @@ internal sealed class DesktopApplication
         this.backend = backend;
         this.tray = tray;
         this.dispatcher = dispatcher;
-        this.delay = delay;
+        this.timerFactory = timerFactory;
         this.openLogs = openLogs;
         this.shutdown = shutdown;
         this.log = log;
@@ -169,7 +196,10 @@ internal sealed class DesktopApplication
         }
         if (explicitExitRequested) return;
         hiddenByClose = false;
-        window.RestoreWithoutAnimation();
+        if (hasFinalPresentation)
+            window.RestoreWithoutAnimation();
+        else
+            window.ShowStaticWaiting();
     }
 
     internal void RefreshTrayAvailability()
@@ -202,17 +232,22 @@ internal sealed class DesktopApplication
         {
             if (explicitExitRequested) return;
             CancellationToken token = lifetimeCancellation.Token;
+            IStartupTimer timer = InvokeTimer();
             Task initialization = InvokeTask(window.InitializeWebViewAsync);
             Task<ReadinessResult> readiness = InvokeReadinessTask(ensureReady, token);
-            Task threshold = InvokeDelay();
+            Task threshold = InvokeTask(delegate {
+                return timer.WaitForThresholdAsync(StartupPolicy.AnimationThreshold);
+            });
+            Observe(threshold, "Startup animation threshold");
 
             Task first = await Task.WhenAny(readiness, threshold);
             if (Object.ReferenceEquals(first, threshold)
+                && threshold.Status == TaskStatus.RanToCompletion
                 && !readiness.IsCompleted
                 && !hiddenByClose
                 && StartupPolicy.ShouldShowAnimatedSplash(
                     reason,
-                    StartupPolicy.AnimationThreshold.Add(TimeSpan.FromTicks(1)),
+                    timer.Elapsed,
                     false))
             {
                 window.ShowAnimatedSplash();
@@ -257,8 +292,8 @@ internal sealed class DesktopApplication
             }
 
             if (explicitExitRequested) return;
-            window.ShowWebContent();
-            if (hiddenByClose) window.Hide();
+            hasFinalPresentation = true;
+            window.PresentWebContent(!hiddenByClose);
         }
         finally
         {
@@ -269,11 +304,14 @@ internal sealed class DesktopApplication
     private async Task ExitCoreAsync()
     {
         lifetimeCancellation.Cancel();
-        tray.Dispose();
+        try { tray.Dispose(); }
+        catch (Exception exception)
+        {
+            log("Unable to dispose the tray icon during exit: " + exception.Message);
+        }
         try
         {
-            if (BackendOwnershipPolicy.MayStop(backend.Ownership))
-                await backend.StopOwnedAsync();
+            await backend.StopOwnedAsync();
         }
         catch (Exception exception)
         {
@@ -286,15 +324,18 @@ internal sealed class DesktopApplication
         catch (Exception exception) { log("Unable to shut down the desktop application: " + exception.Message); }
     }
 
-    private Task InvokeDelay()
+    private IStartupTimer InvokeTimer()
     {
         try
         {
-            Task task = delay(StartupPolicy.AnimationThreshold);
-            if (task == null) throw new InvalidOperationException("The startup delay returned no task.");
-            return task;
+            IStartupTimer timer = timerFactory();
+            if (timer == null) throw new InvalidOperationException("The startup timer factory returned no timer.");
+            return timer;
         }
-        catch (Exception exception) { return FaultedTask(exception); }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException("Unable to create the startup timer.", exception);
+        }
     }
 
     private static Task InvokeTask(Func<Task> operation)
@@ -355,13 +396,14 @@ internal sealed class DesktopApplication
     private void ShowServiceError(string title, string detail)
     {
         if (explicitExitRequested) return;
-        window.ShowError(
+        hasFinalPresentation = true;
+        window.PresentError(
             title,
             detail ?? String.Empty,
             delegate { Observe(RunColdStartAsync(), "Retry"); },
             OpenLogs,
-            delegate { Observe(ExitAsync(), "Exit"); });
-        if (hiddenByClose) window.Hide();
+            delegate { Observe(ExitAsync(), "Exit"); },
+            !hiddenByClose);
     }
 
     private void OpenLogs()

@@ -13,6 +13,16 @@ internal static class DesktopUiPolicyTests
             AssertEx.True(state.IsSplashAnimationRunning);
         });
 
+        runner.Add("static waiting is nonanimated and keeps native chrome", delegate {
+            DesktopPresentationState state = new DesktopPresentationState();
+
+            state.ShowStaticWaiting();
+
+            AssertEx.Equal(DesktopSurface.Waiting, state.Surface);
+            AssertEx.False(state.IsSplashAnimationRunning);
+            AssertEx.Equal(DesktopWindowChromeMode.Native, state.WindowChrome);
+        });
+
         runner.Add("web content stops splash animation immediately", delegate {
             DesktopPresentationState state = new DesktopPresentationState();
             state.ShowAnimatedSplash();

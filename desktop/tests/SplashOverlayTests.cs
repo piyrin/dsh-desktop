@@ -53,6 +53,21 @@ internal static class SplashOverlayTests
             });
         });
 
+        runner.Add("static waiting is fully revealed without animation", delegate {
+            RunSta(delegate {
+                SplashOverlay splash = new SplashOverlay(Geometry.Parse("M 0,0 L 10,0 10,10 0,10 Z"));
+                Grid revealHost = (Grid)splash.Children[0];
+                Grid revealViewport = (Grid)revealHost.Children[0];
+
+                splash.ShowStatic();
+
+                AssertEx.Equal(Visibility.Visible, splash.Visibility);
+                AssertEx.False(splash.IsAnimationRunning);
+                AssertEx.Equal(420.0, revealViewport.Width);
+                AssertEx.Equal<Brush>(null, revealViewport.OpacityMask);
+            });
+        });
+
         runner.Add("window chrome transitions preserve window bounds", delegate {
             RunSta(delegate {
                 Window host = new Window
