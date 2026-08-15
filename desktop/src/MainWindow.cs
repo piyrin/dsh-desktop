@@ -304,6 +304,16 @@ internal sealed class MainWindow : Window
             get { return window.Opacity; }
             set { window.Opacity = value; }
         }
+        public DesktopWindowChromeMode WindowChrome
+        {
+            get
+            {
+                return window.WindowStyle == WindowStyle.None && window.ResizeMode == ResizeMode.NoResize
+                    ? DesktopWindowChromeMode.Borderless
+                    : DesktopWindowChromeMode.Native;
+            }
+            set { DesktopWindowChrome.Apply(window, value); }
+        }
 
         public Task ShowAndWaitUntilLoadedAsync()
         {

@@ -8,6 +8,7 @@ internal interface IInvisiblePreloadWindow
     bool ShowInTaskbar { get; set; }
     bool ShowActivated { get; set; }
     double Opacity { get; set; }
+    DesktopWindowChromeMode WindowChrome { get; set; }
     Task ShowAndWaitUntilLoadedAsync();
     void Hide();
 }
@@ -21,12 +22,14 @@ internal static class InvisibleWindowPreloader
         bool originalShowInTaskbar = window.ShowInTaskbar;
         bool originalShowActivated = window.ShowActivated;
         double originalOpacity = window.Opacity;
+        DesktopWindowChromeMode originalWindowChrome = window.WindowChrome;
         Exception primaryFailure = null;
         try
         {
             window.ShowInTaskbar = false;
             window.ShowActivated = false;
             window.Opacity = 0.0;
+            window.WindowChrome = DesktopWindowChromeMode.Borderless;
             await window.ShowAndWaitUntilLoadedAsync();
         }
         catch (Exception exception)
@@ -35,6 +38,7 @@ internal static class InvisibleWindowPreloader
         }
 
         Exception cleanupFailure = TryCleanup(null, window.Hide);
+        cleanupFailure = TryCleanup(cleanupFailure, delegate { window.WindowChrome = originalWindowChrome; });
         cleanupFailure = TryCleanup(cleanupFailure, delegate { window.Opacity = originalOpacity; });
         cleanupFailure = TryCleanup(cleanupFailure, delegate { window.ShowActivated = originalShowActivated; });
         cleanupFailure = TryCleanup(cleanupFailure, delegate { window.ShowInTaskbar = originalShowInTaskbar; });

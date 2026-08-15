@@ -1,32 +1,43 @@
 # DSH Desktop
 
-DSH Desktop 是一个轻量的 Windows 桌面封装器，用原生 WPF 窗口承载 DeepSeek Harness（DSH）已有的 WebUI。它不会修改 DSH 的前端，也不包含视觉模型、图片识别 MCP 或其他独立扩展。
+DSH Desktop 是一个面向 Windows 的 DeepSeek Harness 桌面壳。它在后台启动或接入本机 DSH Web 服务，并通过原生 WPF 窗口与 WebView2 展示已有 WebUI，让日常使用不再依赖终端窗口和浏览器标签页。
 
-推荐的 GitHub 仓库名是 `dsh-desktop`。
+> 本项目是第三方桌面伴生应用，不是 DeepSeek 官方项目，也不包含或修改 DeepSeek Harness 源码。
 
 ## 功能
 
-- 使用 .NET Framework 4.8、WPF 和 Microsoft WebView2 提供原生桌面窗口。
-- 直接启动 Node.js 后端，不弹出命令提示符或 PowerShell 窗口。
-- 只允许一个桌面实例；再次启动会恢复已有窗口。
-- 关闭窗口后驻留系统托盘，可从托盘打开、重启服务、查看日志或完全退出。
-- 只停止由桌面程序自己启动的 DSH，不会误关用户独立启动的服务。
-- 启动在 3 秒内完成时直接显示 WebUI；超过 3 秒才显示从左到右浮现的等待动画。
-- 对缺少 Node.js、缺少 DSH、8080 端口冲突、启动超时和 WebView2 故障给出可操作的错误提示。
+- 原生 Windows 窗口承载 DSH WebUI，不弹出命令提示符或 PowerShell 窗口。
+- 单实例运行；重复启动会直接恢复已有窗口。
+- 关闭窗口后驻留系统托盘，可打开窗口、重启服务、查看日志或完全退出。
+- 只管理由桌面程序自己启动的 DSH 进程，不会终止用户独立运行的 DSH。
+- 启动在 3 秒内完成时直接显示 WebUI；超过 3 秒才显示无边框启动动画。
+- WebView2 和 DSH 后端并行初始化，正常缓存后的冷启动目标约为 5～6 秒。
+
+## 与 DeepSeek Harness 的关系
+
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 是本项目所承载的上游核心。DSH Desktop 只负责桌面窗口、后端启动、单实例和托盘生命周期，实际对话、工具、会话与 WebUI 均来自本机安装的 DSH。
+
+DSH 官方架构中的“插件”是挂载进 Cordis 插件树、向 DSH 共享上下文贡献服务、事件或可逆副作用的组件。DSH Desktop 不会被 DSH 加载，也不加入该插件树，因此它不是 DSH 插件，不能作为插件直接安装；更准确的定位是独立的 Windows 桌面宿主。插件机制详见 [DeepSeek Harness 架构说明](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.zh.md)。
 
 ## 运行条件
 
 - 64 位 Windows。
-- 已安装 .NET Framework 4.8。
-- 已安装 Microsoft Edge WebView2 Runtime（Evergreen）。
-- `node.exe` 和 `dsh.cmd` 可从 `PATH` 找到，且 DSH 包完整安装在 `dsh.cmd` 对应位置。
-- 第一次构建时，如果本地尚无固定版本的 WebView2 SDK 包，需要联网下载依赖。
+- .NET Framework 4.8。
+- Microsoft Edge WebView2 Runtime。
+- 已通过 npm 全局安装并配置 DeepSeek Harness，`node.exe` 与 `dsh.cmd` 可从 `PATH` 找到。
 
-本仓库不会安装 DeepSeek Harness、Node.js、模型配置或 WebView2 Runtime。
+官方 README 使用 `npx` 直接运行 DSH，但本桌面壳需要可被独立发现的全局 `dsh.cmd`。首次使用请运行：
+
+```powershell
+npm install --global @deepseek-ai/dsh@latest
+dsh --version
+```
+
+本项目不会安装 Node.js、DeepSeek Harness 或模型配置。上游配置与使用方式请参考 [DeepSeek Harness 官方说明](https://github.com/deepseek-ai/deepseek-harness/blob/master/README.zh.md)。
 
 ## 快速开始
 
-在仓库根目录打开 Windows PowerShell，依次运行：
+在仓库根目录打开 Windows PowerShell：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\desktop\test.ps1
@@ -34,72 +45,78 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\desktop\build.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\desktop\install-desktop-shortcut.ps1
 ```
 
-完成后，双击桌面的 `DeepSeek Harness` 快捷方式即可启动。发布目录中的可执行文件是：
+完成后双击桌面的 `DeepSeek Harness` 快捷方式。也可以直接运行：
 
-```text
-desktop\publish\DeepSeek Harness.exe
+```powershell
+& '.\desktop\publish\DeepSeek Harness.exe'
 ```
 
-## 启动速度
+## 使用
 
-正常缓存后的冷启动验收目标是本机约 5～6 秒，这不是对所有电脑的性能保证。等待时间不超过 3 秒时不会播放启动动画；更慢时才显示等待界面，后端和 WebView2 会继续并行初始化。
+- 关闭主窗口：隐藏到系统托盘，DSH 继续运行。
+- 双击托盘图标或选择“打开”：立即恢复窗口，不播放启动动画。
+- 选择“重启服务”：重启由本程序启动的 DSH。
+- 选择“查看日志”：打开 `%LOCALAPPDATA%\DeepSeekHarness\logs`。
+- 选择“退出”：移除托盘图标，并停止本程序拥有的 DSH 进程树。
 
-## 窗口与托盘
+## 更新 DeepSeek Harness
 
-- 点击窗口右上角关闭按钮只会隐藏窗口，程序和 DSH 仍在后台运行。
-- 双击托盘图标，或在托盘菜单选择“打开”，会立即恢复已有窗口且不播放动画。
-- “重启服务”只在当前 DSH 由桌面程序启动时可用。
-- “查看日志”会打开本地日志目录。
-- “退出”会移除托盘图标，并停止桌面程序拥有的 DSH 进程树。
+DSH 与桌面壳分别更新，桌面壳不会自动修改本机的 DSH 安装。更新时按以下顺序操作：
 
-需要重新构建、彻底结束 DSH 或处理 8080 端口问题时，请从托盘选择“退出”，不要只关闭窗口。
+1. 从托盘选择“退出”，完全关闭 DSH Desktop 及其拥有的后端。
+2. 打开 PowerShell 并运行：
 
-## 日志与本地数据
+```powershell
+npm install --global @deepseek-ai/dsh@latest
+```
 
-运行数据位于 `%LOCALAPPDATA%\DeepSeekHarness`：
+3. 关闭并重新打开 PowerShell，让新的命令环境生效，然后核对版本：
 
-- `%LOCALAPPDATA%\DeepSeekHarness\logs\desktop.log`
-- `%LOCALAPPDATA%\DeepSeekHarness\logs\dsh-stdout.log`
-- `%LOCALAPPDATA%\DeepSeekHarness\logs\dsh-stderr.log`
-- `%LOCALAPPDATA%\DeepSeekHarness\cache\node-compile\`
-- `%LOCALAPPDATA%\DeepSeekHarness\webview2\`
+```powershell
+dsh --version
+```
+
+4. 重新双击桌面快捷方式。
+
+桌面程序会在每次启动时重新发现 `dsh.cmd`，因此通常不需要重新构建程序或创建快捷方式。
+
+DeepSeek Harness 目前处于开发者预览阶段，官方说明未来可能出现破坏兼容性的变更。如果新版调整了命令入口、Web 启动参数或页面识别方式，本项目也需要同步适配，然后重新运行测试与构建脚本。
+
+## 开发与构建
+
+桌面端使用 .NET Framework 4.8、WPF、WebView2 和 PowerShell 构建，不依赖 Visual Studio 工程文件。
+
+```powershell
+# 完整测试
+powershell -NoProfile -ExecutionPolicy Bypass -File .\desktop\test.ps1
+
+# 生成发布目录
+powershell -NoProfile -ExecutionPolicy Bypass -File .\desktop\build.ps1
+```
+
+构建产物位于 `desktop\publish`。第一次构建若缺少固定版本的 WebView2 SDK，构建脚本会下载对应 NuGet 包。
 
 ## 项目结构
 
 ```text
 dsh-desktop/
-|-- assets/branding/                  # 应用图标源文件
+|-- assets/branding/                  # 应用图标
 |-- desktop/
-|   |-- assets/                       # 清单与 WebUI 图标
+|   |-- assets/                       # 应用清单与界面资源
 |   |-- runtime/                      # DSH 后端启动脚本
-|   |-- src/                          # WPF、WebView2、托盘与后端管理源码
-|   |-- tests/                        # 自动化与结构测试
-|   |-- build.ps1                     # 构建并生成发布目录
-|   |-- install-desktop-shortcut.ps1  # 创建或更新桌面快捷方式
-|   |-- test.ps1                      # 运行完整测试
-|   `-- README.md                     # 桌面端详细使用说明
-|-- tools/make-icon.ps1               # 重新生成应用图标
+|   |-- src/                          # 桌面端源码
+|   |-- tests/                        # 自动化测试
+|   |-- build.ps1                     # 构建与发布
+|   |-- install-desktop-shortcut.ps1  # 创建桌面快捷方式
+|   |-- test.ps1                      # 完整测试入口
+|   `-- README.md                     # 桌面端开发说明
+|-- tools/                            # 图标生成工具
 |-- .gitignore
 `-- README.md
 ```
 
-`desktop\packages\`、`desktop\publish\`、`desktop\obj\` 和 `desktop\test-output\` 都是本地生成目录，不进入 Git。
+`desktop\packages`、`desktop\obj`、`desktop\test-output` 与 `desktop\publish` 均为本地生成目录，不进入版本库。
 
-## 故障排查
+## 项目状态
 
-- 窗口一直黑色：先从托盘选择“退出”，再重新构建并启动最新版。本项目已在首次显示 WebUI 时主动同步 WebView2 布局，避免离屏预加载后的黑屏。
-- 8080 端口被其他程序占用：退出占用者后，在错误页选择“重试”。
-- WebView2 无法启动：安装或修复 Microsoft Edge WebView2 Runtime，再选择“重试”。
-- 找不到 Node.js 或 DSH：确认 `node.exe`、`dsh.cmd` 在 `PATH` 中，并检查 DSH 安装目录是否包含 `node_modules\@deepseek-ai\dsh\lib\bin.js`。
-
-更详细的启动、托盘和恢复说明见 [桌面端说明](desktop/README.md)。
-
-## 已知限制
-
-- 仅支持 64 位 Windows。
-- DSH 地址目前固定为 `http://127.0.0.1:8080/`。
-- 仓库只负责把现有 DSH WebUI 封装为桌面应用，不提供视觉识别或其他 MCP 扩展。
-
-## 上游与归属
-
-DeepSeek Harness 是独立的上游依赖，本仓库不捆绑其源码。DSH Desktop 是第三方兼容桌面壳，不代表 DeepSeek 或 DSH 上游官方项目，也不表示获得其认可。
+当前版本面向 64 位 Windows，并使用本机 DSH 的 Web 运行模式。DeepSeek Harness 上游仍处于开发预览阶段，上游接口变化可能需要本项目同步适配。

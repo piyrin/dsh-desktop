@@ -15,9 +15,11 @@ internal static class InvisibleWindowPreloaderTests
             AssertEx.False(window.ShowInTaskbarWhenShown);
             AssertEx.False(window.ShowActivatedWhenShown);
             AssertEx.Equal(0.0, window.OpacityWhenShown);
+            AssertEx.Equal(DesktopWindowChromeMode.Borderless, window.WindowChromeWhenShown);
             AssertEx.True(window.ShowInTaskbar);
             AssertEx.True(window.ShowActivated);
             AssertEx.Equal(1.0, window.Opacity);
+            AssertEx.Equal(DesktopWindowChromeMode.Native, window.WindowChrome);
         });
 
         runner.Add("WebView preload leaves an already loaded host untouched", delegate {
@@ -41,10 +43,11 @@ internal static class InvisibleWindowPreloaderTests
             AssertEx.True(Object.ReferenceEquals(original, observed));
             AssertEx.Equal(1, window.HideCalls);
             AssertEx.False(window.IsVisible);
-            AssertEx.Equal("hide,opacity,activate,taskbar", String.Join(",", window.CleanupSequence.ToArray()));
+            AssertEx.Equal("hide,chrome,opacity,activate,taskbar", String.Join(",", window.CleanupSequence.ToArray()));
             AssertEx.Equal(1.0, window.Opacity);
             AssertEx.True(window.ShowActivated);
             AssertEx.True(window.ShowInTaskbar);
+            AssertEx.Equal(DesktopWindowChromeMode.Native, window.WindowChrome);
         });
 
         runner.Add("WebView preload cleanup preserves the original throw-site stack", delegate {
@@ -60,10 +63,11 @@ internal static class InvisibleWindowPreloaderTests
                 && observed.StackTrace.IndexOf("ThrowFromPreloadThrowSite", StringComparison.Ordinal) >= 0);
             AssertEx.Equal(1, window.HideCalls);
             AssertEx.False(window.IsVisible);
-            AssertEx.Equal("hide,opacity,activate,taskbar", String.Join(",", window.CleanupSequence.ToArray()));
+            AssertEx.Equal("hide,chrome,opacity,activate,taskbar", String.Join(",", window.CleanupSequence.ToArray()));
             AssertEx.Equal(1.0, window.Opacity);
             AssertEx.True(window.ShowActivated);
             AssertEx.True(window.ShowInTaskbar);
+            AssertEx.Equal(DesktopWindowChromeMode.Native, window.WindowChrome);
         });
     }
 
@@ -75,17 +79,20 @@ internal static class InvisibleWindowPreloaderTests
         internal bool ShowInTaskbarWhenShown;
         internal bool ShowActivatedWhenShown;
         internal double OpacityWhenShown;
+        internal DesktopWindowChromeMode WindowChromeWhenShown;
 
         public bool IsLoaded { get { return IsLoadedValue; } }
         public bool ShowInTaskbar { get; set; }
         public bool ShowActivated { get; set; }
         public double Opacity { get; set; }
+        public DesktopWindowChromeMode WindowChrome { get; set; }
 
         internal FakePreloadWindow()
         {
             ShowInTaskbar = true;
             ShowActivated = true;
             Opacity = 1.0;
+            WindowChrome = DesktopWindowChromeMode.Native;
         }
 
         public Task ShowAndWaitUntilLoadedAsync()
@@ -94,6 +101,7 @@ internal static class InvisibleWindowPreloaderTests
             ShowInTaskbarWhenShown = ShowInTaskbar;
             ShowActivatedWhenShown = ShowActivated;
             OpacityWhenShown = Opacity;
+            WindowChromeWhenShown = WindowChrome;
             IsLoadedValue = true;
             return Task.FromResult(true);
         }
@@ -110,6 +118,7 @@ internal static class InvisibleWindowPreloaderTests
         private bool showInTaskbar = true;
         private bool showActivated = true;
         private double opacity = 1.0;
+        private DesktopWindowChromeMode windowChrome = DesktopWindowChromeMode.Native;
         private bool cleanupFaultsArmed;
 
         internal readonly System.Collections.Generic.List<string> CleanupSequence =
@@ -159,6 +168,19 @@ internal static class InvisibleWindowPreloaderTests
                 {
                     CleanupSequence.Add("opacity");
                     throw new InvalidOperationException("opacity restore failed");
+                }
+            }
+        }
+        public DesktopWindowChromeMode WindowChrome
+        {
+            get { return windowChrome; }
+            set
+            {
+                windowChrome = value;
+                if (cleanupFaultsArmed && value == DesktopWindowChromeMode.Native)
+                {
+                    CleanupSequence.Add("chrome");
+                    throw new InvalidOperationException("chrome restore failed");
                 }
             }
         }
