@@ -1,8 +1,12 @@
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 
+$repositoryRoot = Split-Path -Parent $PSScriptRoot
+$brandingRoot = Join-Path $repositoryRoot 'assets\branding'
+$null = New-Item -ItemType Directory -Force -Path $brandingRoot
+
 # ---- 1. Extract the whale path data from favicon.svg ----
-$svgPath = 'F:\claudecode\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai\dsh-web-frontend\dist\favicon.svg'
+$svgPath = Join-Path $repositoryRoot 'desktop\assets\favicon.svg'
 $svg = Get-Content -Raw $svgPath
 $m = [regex]::Match($svg, '<path\b[^>]*\bd="([^"]+)"')
 if (-not $m.Success) { throw 'path data not found in favicon.svg' }
@@ -79,7 +83,7 @@ $g.Clear([System.Drawing.Color]::Transparent)
 $g.FillPath([System.Drawing.Brushes]::White, $tile)
 $g.FillPath([System.Drawing.Brushes]::Black, $gp)
 $g.Dispose()
-$pngPath = 'E:\dsh\dsh-whale.png'
+$pngPath = Join-Path $brandingRoot 'dsh-whale.png'
 $bmp.Save($pngPath, [System.Drawing.Imaging.ImageFormat]::Png)
 $bmp.Dispose()
 
@@ -92,7 +96,8 @@ $bw.Write([byte]0); $bw.Write([byte]0); $bw.Write([byte]0); $bw.Write([byte]0)
 $bw.Write([uint16]1); $bw.Write([uint16]32)
 $bw.Write([uint32]$png.Length); $bw.Write([uint32]22)
 $bw.Write($png)
-[System.IO.File]::WriteAllBytes('E:\dsh\dsh-whale.ico', $ms.ToArray())
+$icoPath = Join-Path $brandingRoot 'dsh-whale.ico'
+[System.IO.File]::WriteAllBytes($icoPath, $ms.ToArray())
 
 # ---- 6. Sanity checks ----
 $b = [System.IO.File]::ReadAllBytes($pngPath)
@@ -104,9 +109,9 @@ $fs = [System.IO.File]::OpenRead($pngPath)
 $img = [System.Drawing.Image]::FromStream($fs)
 $fs.Close()
 $img.Dispose()
-Write-Host "ICO: $((Get-Item 'E:\dsh\dsh-whale.ico').Length) bytes"
+Write-Host "ICO: $((Get-Item -LiteralPath $icoPath).Length) bytes"
 
 # cleanup helpers
-Remove-Item 'E:\dsh\icon-render.html' -ErrorAction SilentlyContinue
-Remove-Item 'E:\dsh\.edge-headless' -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $repositoryRoot 'icon-render.html') -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $repositoryRoot '.edge-headless') -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host 'done'
